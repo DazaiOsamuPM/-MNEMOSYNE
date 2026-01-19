@@ -604,12 +604,12 @@ const Game: React.FC = () => {
       <p className="text-red-500 font-mono text-xl tracking-[0.5em] mb-12">PROTOCOL_ERROR</p>
       
       <div className="border-l-2 border-red-900 pl-6 text-left max-w-lg space-y-4 text-gray-400 font-mono text-sm md:text-base bg-black/50 backdrop-blur-md p-6">
-        <p className="pt-4 text-red-500 animate-pulse font-bold">>> ПРЕДУПРЕЖДЕНИЕ: СОДЕРЖИТ ЗВУК И СКРИМЕРЫ</p>
+        <p className="pt-4 text-red-500 animate-pulse font-bold">&gt;&gt; ПРЕДУПРЕЖДЕНИЕ: СОДЕРЖИТ ЗВУК И СКРИМЕРЫ</p>
         <p className="text-white">ИНСТРУКЦИЯ:</p>
         <p>1. [ПРОБЕЛ] - закрыть глаза / моргнуть.</p>
         <p>2. Не допускайте сухости глаз (шкала внизу).</p>
         <p>3. Слушайте шаги и дыхание.</p>
-        <p className="mt-8 text-cyan-400 animate-pulse font-bold">>> НАЖМИТЕ [ENTER] ДЛЯ ЗАПУСКА АУДИО-ЯДРА</p>
+        <p className="mt-8 text-cyan-400 animate-pulse font-bold">&gt;&gt; НАЖМИТЕ [ENTER] ДЛЯ ЗАПУСКА АУДИО-ЯДРА</p>
       </div>
     </div>
   );
@@ -745,11 +745,11 @@ const Game: React.FC = () => {
              </div>
 
              <div className="space-y-4 mb-12 text-lg md:text-xl font-bold h-64 overflow-hidden">
-                 <p className="text-green-800">> Accessing mainframe...</p>
-                 <p className="text-green-600">> Decoding memory fragments...</p>
-                 {timer > 20 && <p className="text-green-500">> Fragment: "Они забрали мои глаза."</p>}
-                 {timer > 50 && <p className="text-green-500">> Fragment: "Я не помню свое лицо."</p>}
-                 {timer > 80 && <p className="text-green-500">> Fragment: "ВЫПУСТИ МЕНЯ."</p>}
+                 <p className="text-green-800">&gt;&gt; Accessing mainframe...</p>
+                 <p className="text-green-600">&gt;&gt; Decoding memory fragments...</p>
+                 {timer > 20 && <p className="text-green-500">&gt;&gt; Fragment: "Они забрали мои глаза."</p>}
+                 {timer > 50 && <p className="text-green-500">&gt;&gt; Fragment: "Я не помню свое лицо."</p>}
+                 {timer > 80 && <p className="text-green-500">&gt;&gt; Fragment: "ВЫПУСТИ МЕНЯ."</p>}
                  <p className="text-green-400 animate-pulse mt-8">
                     {eyesClosed ? ">> ERROR: UPLOAD PAUSED." : ">> UPLOADING DATA..."}
                  </p>
