@@ -791,7 +791,8 @@ const Game: React.FC = () => {
       <h1 className="text-6xl md:text-8xl font-black text-white mb-4 tracking-tighter glitch-anim">
         MNEMOSYNE
       </h1>
-      <p className="text-red-500 font-mono text-xl tracking-[0.5em] mb-12">PROTOCOL_ERROR</p>
+      <p className="text-red-500 font-mono text-xl tracking-[0.5em] mb-4">PROTOCOL_ERROR</p>
+      <p className="text-gray-600 font-mono text-sm tracking-widest mb-12">Версия: 0.1 beta</p>
       
       <div className="border-l-2 border-red-900 pl-6 text-left max-w-lg space-y-4 text-gray-400 font-mono text-sm md:text-base bg-black/50 backdrop-blur-md p-6">
         <p className="pt-4 text-red-500 animate-pulse font-bold">&gt;&gt; ПРЕДУПРЕЖДЕНИЕ: СОДЕРЖИТ ЗВУК И СКРИМЕРЫ</p>
