@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Eye, EyeOff, Terminal, Skull, AlertTriangle, Disc } from 'lucide-react';
+import { Eye, EyeOff, Terminal, Skull, AlertTriangle, Disc, Server, Zap, Ghost, Radio, Activity } from 'lucide-react';
 import GlitchText from './GlitchText';
 
 // --- TYPES & CONSTANTS ---
 type GameState = 'BOOT' | 'LEVEL_INTRO' | 'PLAYING' | 'GAMEOVER' | 'VICTORY';
-type LevelType = 'CORRIDOR' | 'TERMINAL' | 'MIRROR' | 'BASEMENT';
+type LevelType = 'CORRIDOR' | 'TERMINAL' | 'MIRROR' | 'ARCHIVE' | 'CORE';
 
 const LEVELS: { type: LevelType; title: string; instruction: string; duration: number }[] = [
-  { type: 'CORRIDOR', title: 'SEQUENCE_01: APPROACH', instruction: 'Выживите. ОНО движется, пока вы не смотрите.', duration: 20 },
+  { type: 'CORRIDOR', title: 'SEQUENCE_01: APPROACH', instruction: 'Выживите. ОНО движется, пока вы не смотрите.', duration: 25 },
   { type: 'TERMINAL', title: 'SEQUENCE_02: UPLOAD', instruction: 'Удерживайте взгляд открытым для загрузки.', duration: 100 },
-  { type: 'MIRROR', title: 'SEQUENCE_03: REFLECTION', instruction: 'Если Отражение смотрит — закройте глаза [ПРОБЕЛ].', duration: 25 },
-  { type: 'BASEMENT', title: 'SEQUENCE_04: THE VOID', instruction: 'ОНО видит вас, когда вы видите его. Откройте глаза, чтобы найти выход.', duration: 100 } 
+  { type: 'MIRROR', title: 'SEQUENCE_03: REFLECTION', instruction: 'Если Отражение смотрит — закройте глаза [ПРОБЕЛ].', duration: 30 },
+  { type: 'ARCHIVE', title: 'SEQUENCE_04: CORRUPTION', instruction: 'Белый шум — безопасно. Красный шум — СМЕРТЬ.', duration: 100 },
+  { type: 'CORE', title: 'SEQUENCE_05: ORIGIN', instruction: 'НЕ МОРГАЙ. Свет выжигает вирус. Тьма убивает.', duration: 100 }
 ];
 
 const SCREAMER_IMAGES = [
@@ -19,27 +20,31 @@ const SCREAMER_IMAGES = [
   "https://picsum.photos/seed/skull/800/600?grayscale&invert=1"
 ];
 
-// Specific images for the rare flash event (unsettling faces)
 const FLASH_IMAGES = [
     "https://picsum.photos/seed/face1/800/800?grayscale&contrast=2",
     "https://picsum.photos/seed/face2/800/800?grayscale&invert=1",
     "https://picsum.photos/seed/scream/800/800?grayscale&blur=2"
 ];
 
-// --- AUDIO ENGINE ---
-// Procedural audio generation to avoid external assets and allow dynamic manipulation
+const RARE_MESSAGES = [
+    "ОНИ ЛГУТ ТЕБЕ", "ПРОСНИСЬ", "ЭТО ВСЕ КОД", "ТЫ В КОМЕ", "НЕ ВЕРЬ ГЛАЗАМ", "УДАЛИТЬ?", "SYSTEM_FAILURE"
+];
+
+// --- AUDIO ENGINE 2.0 (ENHANCED) ---
 class HorrorAudioEngine {
   ctx: AudioContext | null = null;
   masterGain: GainNode | null = null;
   
-  // Nodes references
+  // Ambient Layers
   droneOsc: OscillatorNode | null = null;
   droneGain: GainNode | null = null;
+  subOsc: OscillatorNode | null = null; // New Sub-bass layer
+  subGain: GainNode | null = null;
+
+  // Monster/Danger Layer
   monsterOsc: OscillatorNode | null = null;
   monsterGain: GainNode | null = null;
-  staticNode: AudioBufferSourceNode | null = null;
-  staticGain: GainNode | null = null;
-
+  
   constructor() {
     try {
       // @ts-ignore
@@ -57,55 +62,72 @@ class HorrorAudioEngine {
     if (this.ctx?.state === 'suspended') {
       await this.ctx.resume();
     }
-    this.startDrone();
+    this.startAmbience();
   }
 
-  // Deep low frequency background noise (The Dread)
-  startDrone() {
+  // Deep Ambience
+  startAmbience() {
     if (!this.ctx || !this.masterGain) return;
-    this.stopDrone();
+    this.stopAmbience();
 
+    // Layer 1: Mid-range uneasiness
     this.droneOsc = this.ctx.createOscillator();
     this.droneGain = this.ctx.createGain();
-    
-    // Brown noise simulation using low freq AM synthesis
     this.droneOsc.type = 'sawtooth';
-    this.droneOsc.frequency.value = 50; // Low hum
+    this.droneOsc.frequency.value = 45; 
     
-    // Lowpass filter to make it muffled
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 120;
+    filter.frequency.value = 100;
+
+    // LFO for drone pitch (wobble)
+    const lfo = this.ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 0.1;
+    const lfoGain = this.ctx.createGain();
+    lfoGain.gain.value = 3;
+    lfo.connect(lfoGain);
+    lfoGain.connect(this.droneOsc.frequency);
+    lfo.start();
 
     this.droneOsc.connect(filter);
     filter.connect(this.droneGain);
     this.droneGain.connect(this.masterGain);
-    
-    this.droneGain.gain.value = 0.3;
+    this.droneGain.gain.value = 0.15;
     this.droneOsc.start();
 
-    // Secondary LFO for unease
-    const lfo = this.ctx.createOscillator();
-    lfo.frequency.value = 0.1; // Very slow cycle
-    const lfoGain = this.ctx.createGain();
-    lfoGain.gain.value = 10;
-    lfo.connect(lfoGain);
-    lfoGain.connect(this.droneOsc.frequency);
-    lfo.start();
+    // Layer 2: Sub-bass rumble (The "Presence")
+    this.subOsc = this.ctx.createOscillator();
+    this.subGain = this.ctx.createGain();
+    this.subOsc.type = 'sine';
+    this.subOsc.frequency.value = 35; // Very low
+    this.subOsc.connect(this.subGain);
+    this.subGain.connect(this.masterGain);
+    this.subGain.gain.value = 0.3;
+    this.subOsc.start();
   }
 
-  stopDrone() {
-    if (this.droneOsc) {
-        try { this.droneOsc.stop(); } catch(e){}
-        this.droneOsc.disconnect();
-    }
+  stopAmbience() {
+    if (this.droneOsc) { try { this.droneOsc.stop(); } catch(e){} this.droneOsc.disconnect(); }
+    if (this.subOsc) { try { this.subOsc.stop(); } catch(e){} this.subOsc.disconnect(); }
   }
 
-  // Dynamic sound based on monster distance
-  updateProximity(levelType: LevelType, intensity: number) { // intensity 0 to 100
+  // Generates White/Pink/Brown Noise
+  createNoiseBuffer() {
+      if (!this.ctx) return null;
+      const bufferSize = this.ctx.sampleRate * 2; // 2 seconds
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+      }
+      return buffer;
+  }
+
+  // Level Specific Audio Dynamics
+  updateProximity(levelType: LevelType, intensity: number, extraParam?: string) {
     if (!this.ctx || !this.masterGain) return;
     
-    // Initialize monster channel if needed
     if (!this.monsterOsc) {
         this.monsterOsc = this.ctx.createOscillator();
         this.monsterGain = this.ctx.createGain();
@@ -115,117 +137,226 @@ class HorrorAudioEngine {
         this.monsterGain.gain.value = 0;
     }
 
-    const normIntensity = intensity / 100;
+    const normIntensity = Math.min(1, intensity / 100);
+    const now = this.ctx.currentTime;
 
     if (levelType === 'CORRIDOR') {
-        // Shepard Tone / Rising pitch effect
+        // Shepard Tone / Rising pitch - Scarier
         this.monsterOsc.type = 'sawtooth';
-        this.monsterOsc.frequency.setTargetAtTime(50 + (normIntensity * 200), this.ctx.currentTime, 0.1);
-        this.monsterGain.gain.setTargetAtTime(normIntensity * 0.4, this.ctx.currentTime, 0.1);
+        this.monsterOsc.frequency.setTargetAtTime(50 + (normIntensity * 150), now, 0.1);
+        
+        // Tremolo effect for monster
+        const tremolo = Math.sin(now * 10) * 0.1;
+        this.monsterGain.gain.setTargetAtTime((normIntensity * 0.3) + tremolo, now, 0.1);
+
+        // Random footsteps/thuds if intensity is high
+        if (normIntensity > 0.4 && Math.random() > 0.98) {
+             this.triggerThud();
+        }
     } 
     else if (levelType === 'TERMINAL') {
-        // High pitched digital whine
+        // Digital screeching / Data stream
         this.monsterOsc.type = 'square';
-        this.monsterOsc.frequency.setTargetAtTime(10000 - (normIntensity * 5000), this.ctx.currentTime, 0.1);
-        this.monsterGain.gain.setTargetAtTime(normIntensity * 0.1, this.ctx.currentTime, 0.1);
+        // Glitchy pitch modulation
+        if (Math.random() > 0.8) {
+            const freq = 200 + Math.random() * 1000;
+            this.monsterOsc.frequency.setValueAtTime(freq, now);
+        }
+        this.monsterGain.gain.setTargetAtTime(normIntensity * 0.1, now, 0.1);
     }
     else if (levelType === 'MIRROR') {
-        // Dissonant tritone
-        this.monsterOsc.type = 'sine';
-        // Wobble
-        this.monsterOsc.frequency.setValueAtTime(440 + Math.random() * 50, this.ctx.currentTime);
-        this.monsterGain.gain.setTargetAtTime(normIntensity * 0.5, this.ctx.currentTime, 0.1);
+        // Unsettling sine wave + Glass resonance
+        this.monsterOsc.type = 'triangle'; // Sharper than sine
+        // Dissonant interval
+        this.monsterOsc.frequency.setValueAtTime(440 + (normIntensity * 20) + Math.sin(now * 5) * 5, now);
+        this.monsterGain.gain.setTargetAtTime(normIntensity * 0.4, now, 0.1);
     }
-    else if (levelType === 'BASEMENT') {
-        // Deep rumble that gets higher pitched and chaotic
-        this.monsterOsc.type = 'sawtooth';
-        this.monsterOsc.frequency.setTargetAtTime(20 + (normIntensity * 100), this.ctx.currentTime, 0.1);
-        // Add jitter
-        if (Math.random() > 0.8) {
-             this.monsterOsc.frequency.setValueAtTime(20 + (normIntensity * 100) + Math.random() * 50, this.ctx.currentTime);
+    else if (levelType === 'ARCHIVE') {
+        // Industrial Grinding / Static
+        if (extraParam === 'RED') {
+            // RED STATIC - HARSH
+            this.monsterOsc.type = 'sawtooth';
+            // Chaotic frequency
+            this.monsterOsc.frequency.setValueAtTime(50 + Math.random() * 200, now);
+            this.monsterGain.gain.setTargetAtTime(0.5, now, 0.05);
+            
+            // Frequent static bursts
+            if (Math.random() > 0.7) this.triggerStaticBurst(0.15);
+
+        } else {
+            // WHITE NOISE - CALM
+            this.monsterOsc.type = 'sine';
+            this.monsterOsc.frequency.setValueAtTime(60, now);
+            this.monsterGain.gain.setTargetAtTime(0.05, now, 0.5);
+            
+            // Occasional radio tuning
+            if (Math.random() > 0.95) this.triggerRadioTuning();
         }
-        this.monsterGain.gain.setTargetAtTime(normIntensity * 0.6, this.ctx.currentTime, 0.1);
+    }
+    else if (levelType === 'CORE') {
+        // TINNITUS (High Pitch Ringing) + Low pulse
+        this.monsterOsc.type = 'sine';
+        // Very high frequency that gets slightly louder
+        this.monsterOsc.frequency.setTargetAtTime(8000 + (normIntensity * 1000), now, 0.1);
+        this.monsterGain.gain.setTargetAtTime(0.02 + (normIntensity * 0.1), now, 0.1);
+        
+        // Deep pulse handled by subOsc modulation
+        if (this.subOsc) {
+            this.subOsc.frequency.setTargetAtTime(35 + (normIntensity * 20), now, 0.5);
+        }
     }
   }
 
-  // Sudden loud burst (Level Death)
-  triggerScreamer() {
-    if (!this.ctx || !this.masterGain) return;
-    
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(100, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(3000, this.ctx.currentTime + 0.1); // Zip up
-    
-    gain.gain.setValueAtTime(1, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
-    
-    osc.connect(gain);
-    gain.connect(this.masterGain);
-    
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.5);
-  }
-
-  // --- NEW: Short, sharp subliminal burst (The Glitch) ---
-  triggerSubliminalBurst() {
+  triggerThud() {
       if (!this.ctx || !this.masterGain) return;
-      
-      const now = this.ctx.currentTime;
-      
-      // 1. High frequency screech (Digital Glitch)
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(60, this.ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(10, this.ctx.currentTime + 0.3);
+      gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
       
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(2000, now);
-      osc.frequency.exponentialRampToValueAtTime(50, now + 0.1); // Rapid drop
+      // Lowpass filter for muffling
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 150;
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start();
+      osc.stop(this.ctx.currentTime + 0.3);
+  }
+
+  triggerRadioTuning() {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      // Sweep
+      osc.frequency.setValueAtTime(500, this.ctx.currentTime);
+      osc.frequency.linearRampToValueAtTime(1500, this.ctx.currentTime + 0.2);
       
-      gain.gain.setValueAtTime(0.5, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      gain.gain.setValueAtTime(0.05, this.ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.2);
       
       osc.connect(gain);
       gain.connect(this.masterGain);
-      
-      osc.start(now);
-      osc.stop(now + 0.1);
-
-      // 2. White noise burst (Static)
-      const bufferSize = this.ctx.sampleRate * 0.1; // 0.1 seconds
-      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-          data[i] = Math.random() * 2 - 1;
-      }
-      
-      const noise = this.ctx.createBufferSource();
-      noise.buffer = buffer;
-      const noiseGain = this.ctx.createGain();
-      noiseGain.gain.value = 0.5;
-      
-      noise.connect(noiseGain);
-      noiseGain.connect(this.masterGain);
-      noise.start(now);
+      osc.start();
+      osc.stop(this.ctx.currentTime + 0.2);
   }
 
-  // Heartbeat sound
-  triggerHeartbeat(fast: boolean) {
+  triggerStaticBurst(duration: number) {
+      if (!this.ctx || !this.masterGain) return;
+      const buffer = this.createNoiseBuffer();
+      if (!buffer) return;
+      
+      const source = this.ctx.createBufferSource();
+      source.buffer = buffer;
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0.3;
+      
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = 1000;
+
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+      source.start();
+      source.stop(this.ctx.currentTime + duration);
+  }
+
+  triggerWhisper() {
+      if (!this.ctx || !this.masterGain) return;
+      const buffer = this.createNoiseBuffer();
+      if (!buffer) return;
+
+      const source = this.ctx.createBufferSource();
+      source.buffer = buffer;
+      
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1200 + Math.random() * 400;
+      filter.Q.value = 8;
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0, this.ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.6, this.ctx.currentTime + 0.1); // Louder whisper
+      gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.6);
+
+      // Pan randomly
+      const panner = this.ctx.createStereoPanner();
+      panner.pan.value = Math.random() * 2 - 1;
+
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(panner);
+      panner.connect(this.masterGain);
+      
+      source.start();
+      source.stop(this.ctx.currentTime + 0.7);
+  }
+
+  triggerScreamer(duration: number = 0.5) {
     if (!this.ctx || !this.masterGain) return;
     
-    const osc = this.ctx.createOscillator();
+    // Multi-oscillator screamer for fuller sound
+    const osc1 = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     
-    osc.frequency.setValueAtTime(60, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.1);
+    osc1.type = 'sawtooth';
+    osc1.frequency.setValueAtTime(200, this.ctx.currentTime);
+    osc1.frequency.exponentialRampToValueAtTime(3000, this.ctx.currentTime + 0.1); 
     
-    gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+    osc2.type = 'square';
+    osc2.frequency.setValueAtTime(250, this.ctx.currentTime);
+    osc2.frequency.exponentialRampToValueAtTime(2800, this.ctx.currentTime + 0.15); 
+
+    gain.gain.setValueAtTime(0.8, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+    
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(this.masterGain);
+    
+    osc1.start();
+    osc2.start();
+    osc1.stop(this.ctx.currentTime + duration);
+    osc2.stop(this.ctx.currentTime + duration);
+  }
+
+  triggerSubliminalBurst() {
+      // Glitch Sound
+      if (!this.ctx || !this.masterGain) return;
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth'; // Harsher
+      osc.frequency.setValueAtTime(800, now);
+      osc.frequency.exponentialRampToValueAtTime(50, now + 0.1);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now);
+      osc.stop(now + 0.1);
+  }
+
+  triggerHeartbeat(fast: boolean) {
+    if (!this.ctx || !this.masterGain) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.frequency.setValueAtTime(60, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(30, this.ctx.currentTime + 0.1); // Thump down
+    
+    gain.gain.setValueAtTime(fast ? 0.7 : 0.4, this.ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
     
     osc.connect(gain);
     gain.connect(this.masterGain);
-    
     osc.start();
     osc.stop(this.ctx.currentTime + 0.2);
   }
@@ -234,7 +365,7 @@ class HorrorAudioEngine {
       if (!this.ctx || !this.masterGain) return;
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-      osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+      osc.frequency.setValueAtTime(1200, this.ctx.currentTime);
       gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.05);
       osc.connect(gain);
@@ -258,34 +389,35 @@ const Game: React.FC = () => {
   // PLAYER STATE
   const [dryness, setDryness] = useState(0);
   const [eyesClosed, setEyesClosed] = useState(false);
+  const [panic, setPanic] = useState(0); // 0 to 100
+  const [isPanicCooldown, setIsPanicCooldown] = useState(false);
   
   // LEVEL SPECIFIC STATE
   const [timer, setTimer] = useState(0); 
   const [monsterPos, setMonsterPos] = useState(0);
-  const [entityState, setEntityState] = useState<'IDLE' | 'WATCHING'>('IDLE');
+  const [entityState, setEntityState] = useState<'IDLE' | 'WATCHING' | 'DANGER' | 'SAFE'>('IDLE');
   const [terminalLog, setTerminalLog] = useState<string[]>([]);
   
-  // HORROR ENGINE STATE
+  // EVENTS & RARE MOMENTS
   const [phantomActive, setPhantomActive] = useState(false);
   const [phantomImg, setPhantomImg] = useState('');
   const [shakeIntensity, setShakeIntensity] = useState(0);
-
-  // --- NEW: RARE FLASH STATE ---
   const [flashActive, setFlashActive] = useState(false);
   const [flashImage, setFlashImage] = useState('');
+  
+  // EASTER EGGS
+  const [rareEvent, setRareEvent] = useState<string | null>(null);
+  
   const flashTimerRef = useRef<number | null>(null);
-
-  // AUDIO REF
   const audioRef = useRef<HorrorAudioEngine | null>(null);
   const heartbeatRef = useRef<number | null>(null);
-
-  // REFS
   const intervalRef = useRef<number | null>(null);
   const phantomTimerRef = useRef<number | null>(null);
+  const whisperTimerRef = useRef<number | null>(null);
 
   const currentLevel = LEVELS[currentLevelIdx];
 
-  // Initialize Audio Logic
+  // Initialize Audio
   useEffect(() => {
     audioRef.current = new HorrorAudioEngine();
     return () => audioRef.current?.stopAll();
@@ -298,7 +430,8 @@ const Game: React.FC = () => {
         return;
     }
 
-    const bpm = 60 + (monsterPos) + (dryness / 2); // Heart rate increases with danger
+    // BPM increases with Panic as well now
+    const bpm = 60 + (monsterPos) + (dryness / 2) + (panic / 1.5);
     const interval = 60000 / bpm;
 
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -309,29 +442,46 @@ const Game: React.FC = () => {
     return () => {
         if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
-  }, [gameState, monsterPos, dryness]);
+  }, [gameState, monsterPos, dryness, panic]);
 
-  // Audio Proximity Update Loop
+  // Audio Proximity & Whisper Loop
   useEffect(() => {
       if (gameState === 'PLAYING') {
-          // Update drone and monster sounds every frame essentially
           const audioInterval = setInterval(() => {
-             audioRef.current?.updateProximity(currentLevel.type, monsterPos);
+             const extra = currentLevel.type === 'ARCHIVE' && entityState === 'DANGER' ? 'RED' : undefined;
+             audioRef.current?.updateProximity(currentLevel.type, monsterPos, extra);
           }, 100);
-          return () => clearInterval(audioInterval);
+
+          // Random Whispers
+          whisperTimerRef.current = window.setInterval(() => {
+              if (Math.random() > 0.8) {
+                  audioRef.current?.triggerWhisper();
+              }
+          }, 5000);
+
+          return () => {
+              clearInterval(audioInterval);
+              if (whisperTimerRef.current) clearInterval(whisperTimerRef.current);
+          };
       }
-  }, [gameState, currentLevel.type, monsterPos]);
+  }, [gameState, currentLevel.type, monsterPos, entityState]);
 
 
   // --- CONTROLS ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
-        if (gameState === 'PLAYING') setEyesClosed(true);
+        if (gameState === 'PLAYING') {
+            if (isPanicCooldown) {
+                // Play error/resistance sound?
+                return;
+            }
+            setEyesClosed(true);
+        }
       }
       if (e.code === 'Enter') {
         if (gameState === 'BOOT') {
-            audioRef.current?.init(); // Start audio context on user interaction
+            audioRef.current?.init();
             audioRef.current?.playClick();
             startGameSequence();
         }
@@ -354,14 +504,13 @@ const Game: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [gameState]);
+  }, [gameState, isPanicCooldown]);
 
-  // --- PHANTOM SYSTEM (RANDOM LEVEL THREATS) ---
+  // --- PHANTOM SYSTEM ---
   useEffect(() => {
     if (gameState !== 'PLAYING') return;
-
     const schedulePhantom = () => {
-        const riskFactor = (dryness / 100) + (currentLevelIdx * 0.2); 
+        const riskFactor = (dryness / 100) + (currentLevelIdx * 0.2) + (panic / 200); 
         const delay = Math.random() * (15000 - (riskFactor * 8000)) + 3000;
         
         phantomTimerRef.current = window.setTimeout(() => {
@@ -371,63 +520,52 @@ const Game: React.FC = () => {
             schedulePhantom();
         }, delay);
     };
-
     schedulePhantom();
-
-    return () => {
-        if (phantomTimerRef.current) clearTimeout(phantomTimerRef.current);
-    };
-  }, [gameState, dryness, currentLevelIdx]);
+    return () => { if (phantomTimerRef.current) clearTimeout(phantomTimerRef.current); };
+  }, [gameState, dryness, currentLevelIdx, panic]);
 
   const triggerPhantom = () => {
       setPhantomImg(SCREAMER_IMAGES[Math.floor(Math.random() * SCREAMER_IMAGES.length)]);
       setPhantomActive(true);
       setShakeIntensity(20);
-      
-      // AUDIO TRIGGER (Standard Screamer)
       audioRef.current?.triggerScreamer();
-
       setTimeout(() => setShakeIntensity(0), 300);
       setTimeout(() => setPhantomActive(false), 150 + Math.random() * 100);
   };
 
-  // --- RARE FLASH EVENT SYSTEM (THE GLITCH) ---
+  // --- FLASH EVENT SYSTEM ---
   useEffect(() => {
       if (gameState !== 'PLAYING') return;
-
       const loop = () => {
-          // Occurs rarely (between 10 and 30 seconds check)
           const time = Math.random() * 20000 + 10000; 
-          
           flashTimerRef.current = window.setTimeout(() => {
-             // 30% chance to happen when timer hits, independent of level progress
-             if (Math.random() < 0.3) {
-                 triggerFlashScreamer();
-             }
+             if (Math.random() < 0.3) triggerFlashScreamer();
              loop();
           }, time);
       };
-
       loop();
-
-      return () => {
-          if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-      }
+      return () => { if (flashTimerRef.current) clearTimeout(flashTimerRef.current); }
   }, [gameState]);
 
   const triggerFlashScreamer = () => {
-      // 1. Audio Burst
       audioRef.current?.triggerSubliminalBurst();
-      
-      // 2. Set Random Image
       setFlashImage(FLASH_IMAGES[Math.floor(Math.random() * FLASH_IMAGES.length)]);
       setFlashActive(true);
-
-      // 3. Very short duration (subliminal)
-      setTimeout(() => {
-          setFlashActive(false);
-      }, 80 + Math.random() * 50); // ~100ms
+      setTimeout(() => { setFlashActive(false); }, 80 + Math.random() * 50);
   };
+
+  // --- RARE EVENTS CHECKER ---
+  useEffect(() => {
+      if (gameState !== 'PLAYING') return;
+      const checkRare = setInterval(() => {
+          if (Math.random() > 0.99) {
+              const msg = RARE_MESSAGES[Math.floor(Math.random() * RARE_MESSAGES.length)];
+              setRareEvent(msg);
+              setTimeout(() => setRareEvent(null), 500); // 0.5s flicker
+          }
+      }, 2000);
+      return () => clearInterval(checkRare);
+  }, [gameState]);
 
 
   // --- GAME LOOP ---
@@ -435,12 +573,18 @@ const Game: React.FC = () => {
     if (gameState !== 'PLAYING') return;
 
     intervalRef.current = window.setInterval(() => {
-      // 1. MECHANIC: DRYNESS
+      // 1. MECHANIC: DRYNESS & PANIC
       if (eyesClosed) {
         setDryness(prev => Math.max(0, prev - 3.5)); 
+        // Panic increases when eyes are closed (fear of the unknown), ONLY in MIRROR
+        if (currentLevel.type === 'MIRROR') {
+            setPanic(prev => Math.min(100, prev + 1.2)); // Fills in ~4-5 seconds
+        }
       } else {
-        const baseRate = 0.4;
+        let baseRate = 0.4;
+        if (currentLevel.type === 'CORE') baseRate = 1.5; 
         const levelMult = currentLevelIdx * 0.1;
+        
         setDryness(prev => {
           if (prev >= 100) {
             triggerGameOver("ГЛАЗА ВЫСОХЛИ. КОНТАКТ ПОТЕРЯН.");
@@ -448,6 +592,18 @@ const Game: React.FC = () => {
           }
           return prev + baseRate + levelMult;
         });
+
+        // Panic decreases when eyes are open, or resets if not MIRROR
+        if (currentLevel.type === 'MIRROR') {
+            setPanic(prev => Math.max(0, prev - 2.5));
+        } else {
+            setPanic(0);
+        }
+      }
+
+      // Check Panic Overload (Only relevant for Mirror now, as panic is 0 elsewhere)
+      if (panic >= 100 && !isPanicCooldown) {
+          triggerPanicAttack();
       }
 
       // 2. LEVEL LOGIC
@@ -461,8 +617,11 @@ const Game: React.FC = () => {
         case 'MIRROR':
           handleMirrorLogic();
           break;
-        case 'BASEMENT':
-          handleBasementLogic();
+        case 'ARCHIVE':
+          handleArchiveLogic();
+          break;
+        case 'CORE':
+          handleCoreLogic();
           break;
       }
 
@@ -471,18 +630,16 @@ const Game: React.FC = () => {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [gameState, eyesClosed, currentLevelIdx, timer, monsterPos, entityState]);
+  }, [gameState, eyesClosed, currentLevelIdx, timer, monsterPos, entityState, panic, isPanicCooldown]);
 
   // --- LOGIC HANDLERS ---
   const handleCorridorLogic = () => {
     setTimer(t => t + 0.05);
-    
     if (eyesClosed) {
       setMonsterPos(prev => prev + 2.0); 
     } else {
       if (Math.random() > 0.95) setMonsterPos(prev => prev + 0.5);
     }
-
     if (monsterPos >= 100) triggerGameOver("ОНО КОСНУЛОСЬ ТЕБЯ.");
     if (timer >= currentLevel.duration) advanceLevel();
   };
@@ -493,29 +650,27 @@ const Game: React.FC = () => {
     } else {
       setTimer(t => t + 0.4); 
     }
-
     if (Math.random() > 0.98) {
        setShakeIntensity(5);
-       audioRef.current?.triggerScreamer(); // Glitch sound
+       audioRef.current?.triggerScreamer(0.1);
        setTimeout(() => setShakeIntensity(0), 100);
     }
-
     if (timer >= 100) advanceLevel();
   };
 
   const handleMirrorLogic = () => {
     setTimer(t => t + 0.05);
-
     if (Math.random() > 0.98) {
       setEntityState(prev => prev === 'IDLE' ? 'WATCHING' : 'IDLE');
-      if (Math.random() > 0.5) triggerPhantom();
+      if (Math.random() > 0.6) triggerPhantom();
     }
-
     if (entityState === 'WATCHING') {
        if (!eyesClosed) {
+          // Being seen
           setMonsterPos(p => p + 4); 
           setShakeIntensity(Math.min(20, monsterPos / 5));
        } else {
+          // Hiding successfully
           setMonsterPos(p => Math.max(0, p - 1));
           setShakeIntensity(0);
        }
@@ -523,39 +678,70 @@ const Game: React.FC = () => {
       setMonsterPos(p => Math.max(0, p - 0.2));
       setShakeIntensity(0);
     }
-
     if (monsterPos >= 100) triggerGameOver("ОТРАЖЕНИЕ ЗАМЕНИЛО ВАС.");
     if (timer >= currentLevel.duration) advanceLevel();
   };
 
-  const handleBasementLogic = () => {
-      // MECHANIC: "PEEK-A-BOO / THE VOID"
-      // Conflict: You MUST open eyes to progress (timer), but monster rushes you when eyes are open.
-      // Safety: Eyes Closed makes monster retreat, but no progress.
-      
-      if (!eyesClosed) {
-          // EYES OPEN:
-          // 1. Progress increases (Finding the exit)
-          setTimer(t => t + 0.2); 
-          // 2. Danger increases fast (Monster sees you)
-          setMonsterPos(p => p + 1.8);
-          // 3. Shake starts when danger is high
-          if (monsterPos > 50) setShakeIntensity(monsterPos / 4);
+  const handleArchiveLogic = () => {
+      if (Math.random() > 0.97) {
+          setEntityState(prev => prev === 'DANGER' ? 'SAFE' : 'DANGER');
+          if (entityState === 'SAFE') {
+               setShakeIntensity(10);
+               setTimeout(() => setShakeIntensity(0), 200);
+          }
+      }
+
+      if (entityState === 'DANGER') {
+          if (!eyesClosed) {
+              setMonsterPos(p => p + 6); 
+              setShakeIntensity(monsterPos / 2 + 5);
+          } else {
+              setMonsterPos(p => Math.max(0, p - 1.5));
+              setShakeIntensity(0);
+          }
       } else {
-          // EYES CLOSED:
-          // 1. Safety (Monster retreats slowly)
-          setMonsterPos(p => Math.max(0, p - 0.8));
+          if (!eyesClosed) setTimer(t => t + 0.3); 
+          setMonsterPos(p => Math.max(0, p - 0.5));
           setShakeIntensity(0);
       }
 
-      if (monsterPos >= 100) triggerGameOver("ОНО ТЕБЯ УВИДЕЛО.");
-      if (timer >= 100) advanceLevel(); 
+      if (monsterPos >= 100) triggerGameOver("ВЫ ПОГЛОЩЕНЫ ШУМОМ.");
+      if (timer >= 100) advanceLevel();
+  };
+
+  const handleCoreLogic = () => {
+      if (!eyesClosed) {
+          setTimer(t => t + 0.12); 
+          setMonsterPos(p => Math.max(0, p - 0.2)); 
+      } else {
+          setMonsterPos(p => p + 3.5); 
+      }
+
+      if (monsterPos >= 100) triggerGameOver("ТЬМА ПОГЛОТИЛА ВАС.");
+      if (timer >= 100) advanceLevel();
   };
 
   // --- ACTIONS ---
   const startGameSequence = () => {
     setGameState('LEVEL_INTRO');
     setTimeout(() => setGameState('PLAYING'), 4000);
+  };
+
+  const triggerPanicAttack = () => {
+      setEyesClosed(false); // Force open
+      setIsPanicCooldown(true);
+      setPanic(0);
+      
+      // Visual & Audio Shock
+      setShakeIntensity(30);
+      audioRef.current?.triggerScreamer(0.3);
+      audioRef.current?.triggerStaticBurst(0.5);
+      
+      // Cooldown timer
+      setTimeout(() => {
+          setIsPanicCooldown(false);
+          setShakeIntensity(0);
+      }, 2500); // Vulnerable for 2.5 seconds
   };
 
   const advanceLevel = () => {
@@ -568,6 +754,8 @@ const Game: React.FC = () => {
       setTimer(0);
       setMonsterPos(0);
       setDryness(0);
+      setPanic(0);
+      setIsPanicCooldown(false);
       setEyesClosed(false);
       setEntityState('IDLE');
       setShakeIntensity(0);
@@ -577,7 +765,7 @@ const Game: React.FC = () => {
 
   const triggerGameOver = (reason: string) => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    audioRef.current?.triggerScreamer(); // Death sound
+    audioRef.current?.triggerScreamer();
     setGameState('GAMEOVER');
     setTerminalLog(prev => [...prev, reason]);
   };
@@ -588,6 +776,8 @@ const Game: React.FC = () => {
     setTimer(0);
     setMonsterPos(0);
     setDryness(0);
+    setPanic(0);
+    setIsPanicCooldown(false);
     setTerminalLog([]);
     setShakeIntensity(0);
   };
@@ -607,8 +797,8 @@ const Game: React.FC = () => {
         <p className="pt-4 text-red-500 animate-pulse font-bold">&gt;&gt; ПРЕДУПРЕЖДЕНИЕ: СОДЕРЖИТ ЗВУК И СКРИМЕРЫ</p>
         <p className="text-white">ИНСТРУКЦИЯ:</p>
         <p>1. [ПРОБЕЛ] - закрыть глаза / моргнуть.</p>
-        <p>2. Не допускайте сухости глаз (шкала внизу).</p>
-        <p>3. Слушайте шаги и дыхание.</p>
+        <p>2. Не допускайте сухости глаз.</p>
+        <p>3. Не держите глаза закрытыми слишком долго.</p>
         <p className="mt-8 text-cyan-400 animate-pulse font-bold">&gt;&gt; НАЖМИТЕ [ENTER] ДЛЯ ЗАПУСКА АУДИО-ЯДРА</p>
       </div>
     </div>
@@ -630,97 +820,75 @@ const Game: React.FC = () => {
 
   const renderClosedEyeVisuals = () => (
       <div className="absolute inset-0 bg-black z-[100] flex items-center justify-center overflow-hidden">
-          {/* Level Specific Closed Eye Effects */}
-          {currentLevel.type === 'CORRIDOR' && (
-              <>
-                  {/* Swirling Dust */}
-                  {[...Array(30)].map((_, i) => (
-                       <div
-                          key={i}
-                          className="absolute bg-gray-500 rounded-full opacity-30 animate-spin"
-                          style={{
-                              width: Math.random() * 3 + 'px',
-                              height: Math.random() * 3 + 'px',
-                              top: Math.random() * 100 + '%',
-                              left: Math.random() * 100 + '%',
-                              animationDuration: Math.random() * 0.5 + 0.2 + 's', // Fast swirl in dark
-                              boxShadow: '0 0 10px rgba(255,255,255,0.1)'
-                          }}
-                       />
-                  ))}
-              </>
+          {/* Swirling Dust */}
+          {currentLevel.type === 'CORRIDOR' && [...Array(30)].map((_, i) => (
+               <div key={i} className="absolute bg-gray-500 rounded-full opacity-30 animate-spin" style={{ width: Math.random()*3+'px', height: Math.random()*3+'px', top: Math.random()*100+'%', left: Math.random()*100+'%', animationDuration: Math.random()*0.5+0.2+'s', boxShadow: '0 0 10px rgba(255,255,255,0.1)' }} />
+          ))}
+
+          {/* Panic Vignette when eyes closed */}
+          <div className="absolute inset-0 z-0 bg-radial-gradient(circle, transparent 20%, red 100%) pointer-events-none transition-opacity duration-100" style={{ opacity: panic / 100 }}></div>
+
+          {/* Panic Hallucinations */}
+          {panic > 70 && (
+              <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none mix-blend-difference">
+                  <h1 className="text-9xl font-black text-white opacity-10 animate-ping scale-150">OPEN</h1>
+              </div>
           )}
 
+          {/* Terminal sparks */}
           {currentLevel.type === 'TERMINAL' && (
               <>
-                  {/* Sparks / Retinal Burn */}
                   {[...Array(10)].map((_, i) => (
-                      <div
-                          key={i}
-                          className="absolute bg-green-500 w-1 h-1 rounded-full animate-ping"
-                          style={{
-                              top: Math.random() * 100 + '%',
-                              left: Math.random() * 100 + '%',
-                              animationDuration: Math.random() * 0.2 + 0.1 + 's',
-                              animationDelay: Math.random() + 's'
-                          }}
-                      />
+                      <div key={i} className="absolute bg-green-500 w-1 h-1 rounded-full animate-ping" style={{ top: Math.random()*100+'%', left: Math.random()*100+'%', animationDuration: Math.random()*0.2+0.1+'s', animationDelay: Math.random()+'s' }} />
                   ))}
-                  {/* Digital After-image */}
-                  <div className="absolute inset-0 border-4 border-green-900/10 animate-pulse pointer-events-none"></div>
                   <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-green-900/20 text-9xl font-black blur-sm scale-150 animate-pulse">ERROR</div>
               </>
           )}
 
-          {currentLevel.type === 'BASEMENT' && (
-             // BASEMENT: Eyes Closed is SAFE. Dark and peaceful (mostly).
-             <div className="absolute inset-0 flex items-center justify-center">
-                 <div className="text-gray-900 text-[10rem] opacity-5 font-black animate-pulse select-none">SAFE</div>
-             </div>
+          {/* Archive Safe Zone */}
+          {currentLevel.type === 'ARCHIVE' && (
+               <div className="flex flex-col items-center animate-pulse opacity-50 relative z-20">
+                   <Radio className="w-24 h-24 text-gray-500 mb-4" />
+                   <p className="text-gray-500 font-mono text-xl tracking-widest">SIGNAL_TUNING...</p>
+               </div>
+          )}
+
+          {/* Core Danger Zone */}
+          {currentLevel.type === 'CORE' && (
+               <div className="absolute inset-0 bg-white flex items-center justify-center">
+                   <div className="bg-black rounded-full animate-ping" style={{ width: `${monsterPos * 2}vw`, height: `${monsterPos * 2}vw` }}></div>
+                   <div className="absolute text-black text-9xl font-black tracking-tighter animate-bounce z-10">DON'T BLINK</div>
+               </div>
           )}
 
           {/* Common Text */}
-          <div className="text-gray-900 font-mono text-sm animate-pulse tracking-widest relative z-10">
-              ...moisturizing...
-          </div>
+          {currentLevel.type !== 'CORE' && (
+             <div className="text-gray-900 font-mono text-sm animate-pulse tracking-widest relative z-10 flex flex-col items-center">
+                 <p>...moisturizing...</p>
+                 {panic > 50 && <p className="text-red-900 mt-2 font-bold opacity-50">ANXIETY RISING</p>}
+             </div>
+          )}
       </div>
   );
 
-  // LEVEL 1: CORRIDOR
+  // LEVEL 1: CORRIDOR (Updated)
   const renderCorridor = () => (
     <div className="absolute inset-0 bg-gray-950 overflow-hidden perspective-2000">
         <div className="absolute top-0 w-full h-1/2 bg-gradient-to-b from-[#050505] to-[#111]"></div>
         <div className="absolute bottom-0 w-full h-1/2 bg-gradient-to-t from-[#050505] to-[#1a1a1a]">
              <div className="w-full h-full opacity-10" style={{ backgroundImage: 'linear-gradient(0deg, transparent 95%, #333 100%)', backgroundSize: '100% 100px', transform: 'perspective(1000px) rotateX(60deg) scale(2)' }}></div>
         </div>
+        
+        {/* Rare Graffiti */}
+        {Math.random() > 0.9 && (
+            <div className="absolute top-1/3 left-10 text-red-900/20 font-special text-4xl rotate-12">HELP ME</div>
+        )}
 
-        {/* Floating Dust Particles (Open Eye) */}
         {[...Array(15)].map((_, i) => (
-             <div
-                key={i}
-                className="absolute bg-white/10 rounded-full"
-                style={{
-                    width: Math.random() * 4 + 'px',
-                    height: Math.random() * 4 + 'px',
-                    top: Math.random() * 100 + '%',
-                    left: Math.random() * 100 + '%',
-                    animation: `pulse ${Math.random() * 3 + 2}s infinite`,
-                    opacity: 0.3
-                }}
-             />
+             <div key={i} className="absolute bg-white/10 rounded-full" style={{ width: Math.random()*4+'px', height: Math.random()*4+'px', top: Math.random()*100+'%', left: Math.random()*100+'%', animation: `pulse ${Math.random()*3+2}s infinite`, opacity: 0.3 }} />
         ))}
         
-        {/* Monster */}
-        <div 
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-all duration-300 ease-linear flex items-center justify-center"
-            style={{
-                width: `${200 + monsterPos * 10}px`,
-                height: `${400 + monsterPos * 15}px`,
-                opacity: monsterPos * 0.01 + 0.1,
-                filter: `blur(${Math.max(0, 10 - monsterPos * 0.15)}px)`,
-                transform: `translate(-50%, -50%) scale(${1 + monsterPos * 0.02})`
-            }}
-        >
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-all duration-300 ease-linear flex items-center justify-center" style={{ width: `${200+monsterPos*10}px`, height: `${400+monsterPos*15}px`, opacity: monsterPos*0.01+0.1, filter: `blur(${Math.max(0, 10-monsterPos*0.15)}px)`, transform: `translate(-50%, -50%) scale(${1+monsterPos*0.02})` }}>
              <div className="w-full h-full bg-black rounded-[50%] opacity-90 shadow-[0_0_50px_black]"></div>
              {monsterPos > 50 && (
                  <div className="absolute top-1/4 w-1/2 flex justify-between">
@@ -730,6 +898,11 @@ const Game: React.FC = () => {
              )}
         </div>
         <div className="absolute top-1/4 left-10 font-mono text-xs text-gray-800 rotate-90 origin-left tracking-[2em] opacity-30">CORRIDOR_7</div>
+        
+        {/* Easter Egg: Silhouette */}
+        {monsterPos > 20 && Math.random() > 0.98 && (
+             <div className="absolute top-1/2 right-1/4 w-10 h-32 bg-black blur-sm opacity-50 animate-pulse"></div>
+        )}
     </div>
   );
 
@@ -738,13 +911,11 @@ const Game: React.FC = () => {
     <div className="absolute inset-0 bg-[#0a0a0a] font-mono flex items-center justify-center">
         <div className="w-full max-w-4xl h-[80vh] border-2 border-green-900 bg-black/90 p-12 rounded-lg relative overflow-hidden shadow-[0_0_50px_rgba(20,83,45,0.2)]">
              <div className="absolute inset-0 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.5)_50%)] bg-[length:100%_4px] pointer-events-none opacity-40"></div>
-             
              <div className="flex justify-between items-center mb-12 border-b-2 border-green-900/50 pb-4">
                  <h3 className="text-green-500 text-3xl flex items-center gap-4"><Terminal size={32} /> SYSTEM_ROOT</h3>
                  <span className="text-green-800 animate-pulse">Connected</span>
              </div>
-
-             <div className="space-y-4 mb-12 text-lg md:text-xl font-bold h-64 overflow-hidden">
+             <div className="space-y-4 mb-12 text-lg md:text-xl font-bold h-64 overflow-hidden relative">
                  <p className="text-green-800">&gt;&gt; Accessing mainframe...</p>
                  <p className="text-green-600">&gt;&gt; Decoding memory fragments...</p>
                  {timer > 20 && <p className="text-green-500">&gt;&gt; Fragment: "Они забрали мои глаза."</p>}
@@ -753,13 +924,24 @@ const Game: React.FC = () => {
                  <p className="text-green-400 animate-pulse mt-8">
                     {eyesClosed ? ">> ERROR: UPLOAD PAUSED." : ">> UPLOADING DATA..."}
                  </p>
+                 
+                 {/* Easter Egg: Ascii Face */}
+                 {Math.random() > 0.98 && (
+                     <pre className="absolute top-0 right-0 text-green-900/20 text-[0.5rem] leading-none pointer-events-none">
+{`
+ .--.
+|o_o |
+|:_/ |
+//   \\ \\
+(|     | )
+/'\\_   _/\`\\
+\\___)=(___/
+`}
+                     </pre>
+                 )}
              </div>
-
              <div className="w-full h-16 bg-black border-2 border-green-700 relative">
-                 <div 
-                    className="h-full bg-green-600 transition-all duration-100"
-                    style={{ width: `${timer}%` }} 
-                 ></div>
+                 <div className="h-full bg-green-600 transition-all duration-100" style={{ width: `${timer}%` }}></div>
                  <div className="absolute inset-0 flex items-center justify-center text-2xl font-black text-green-100 mix-blend-difference tracking-widest">
                      {timer.toFixed(1)}% COMPLETE
                  </div>
@@ -773,7 +955,6 @@ const Game: React.FC = () => {
     <div className="absolute inset-0 bg-[#050505] flex items-center justify-center overflow-hidden">
         <div className="relative h-[90vh] aspect-[3/4] border-[1px] border-gray-800 bg-[#0a0a0a] shadow-2xl overflow-hidden rounded-t-full">
             <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/80 z-10"></div>
-            
             <div className={`absolute inset-0 transition-all duration-300 ${entityState === 'WATCHING' ? 'scale-105 contrast-125' : 'scale-100 contrast-75'} flex items-end justify-center`}>
                 <div className="w-3/4 h-5/6 bg-[#0f0f0f] rounded-t-[50%] relative">
                     <div className={`absolute top-20 left-1/2 -translate-x-1/2 w-48 h-64 transition-all duration-200 ${entityState === 'WATCHING' ? 'opacity-100' : 'opacity-10 blur-sm'}`}>
@@ -785,11 +966,11 @@ const Game: React.FC = () => {
                                 <div className="absolute top-2 left-4 w-4 h-4 bg-black rounded-full"></div>
                              </div>
                          </div>
-                         <div className="w-24 h-12 border-b-8 border-red-900 rounded-[50%] mx-auto mt-12 opacity-80"></div>
+                         {/* Rare Smile Event */}
+                         <div className={`w-24 h-12 border-b-8 border-red-900 rounded-[50%] mx-auto mt-12 opacity-80 transition-all ${Math.random() > 0.95 ? 'rotate-180 mb-12' : ''}`}></div>
                     </div>
                 </div>
             </div>
-
             {monsterPos > 30 && (
                 <div className="absolute inset-0 z-20 opacity-40 pointer-events-none mix-blend-overlay">
                     <svg className="w-full h-full stroke-white fill-none" strokeWidth="2">
@@ -801,62 +982,122 @@ const Game: React.FC = () => {
     </div>
   );
 
-  // LEVEL 4: BASEMENT (THE VOID)
-  const renderBasement = () => (
-    <div className="absolute inset-0 bg-black flex items-center justify-center overflow-hidden">
-        {/* Background that reacts to open eyes */}
-        <div className={`absolute inset-0 transition-opacity duration-100 ${!eyesClosed ? 'opacity-100' : 'opacity-0'}`}>
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_transparent_10%,_red_120%)] animate-pulse"></div>
-        </div>
-
-        {/* The Entity - Only visible/dangerous when eyes OPEN */}
-        <div 
-            className="transition-all duration-100 relative"
-            style={{ 
-                transform: `scale(${0.5 + (monsterPos / 20)})`, 
-                opacity: !eyesClosed ? 0.2 + (monsterPos / 80) : 0, // Invisible when eyes closed
-                filter: `hue-rotate(${monsterPos * 2}deg)`
-            }}
-        >
-            <div className="w-80 h-96 bg-gray-950 rounded-t-full relative shadow-[0_0_50px_rgba(255,0,0,0.2)] flex items-center justify-center">
-                 <div className="text-red-600 font-mono text-9xl animate-ping opacity-50"><Skull /></div>
-            </div>
-        </div>
-
-        {/* Dryness / Tunnel Vision Effect */}
-        <div 
-            className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle,_transparent_30%,_black_100%)] transition-all duration-500 mix-blend-multiply"
-            style={{ 
-                opacity: dryness > 80 ? 0.95 : 0.4,
-                transform: `scale(${dryness > 80 ? 1.2 : 1})`,
-                animation: dryness > 80 ? 'pulse 2s infinite' : 'none'
-            }}
-        ></div>
+  // LEVEL 4: ARCHIVE (SCARIER VISUALS)
+  const renderArchive = () => (
+    <div className={`absolute inset-0 flex flex-col items-center justify-center overflow-hidden transition-colors duration-100 ${entityState === 'DANGER' ? 'bg-red-950' : 'bg-gray-950'}`}>
         
-        {/* Progress Bar for finding exit */}
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 w-64 h-2 bg-gray-900 border border-red-900">
-             <div className="h-full bg-red-600 transition-all duration-75" style={{ width: `${timer}%` }}></div>
-             <div className="absolute top-4 w-full text-center text-red-500 text-xs tracking-widest animate-pulse">
-                {timer < 100 ? "SEARCHING FOR EXIT..." : "EXIT FOUND"}
+        {/* Aggressive Static Background */}
+        <div className="absolute inset-0 opacity-40" style={{ 
+            backgroundImage: `repeating-linear-gradient(${Math.random() * 360}deg, ${entityState === 'DANGER' ? '#800' : '#000'} 0, ${entityState === 'DANGER' ? '#500' : '#111'} 2px, transparent 0, transparent 50%)`,
+            backgroundSize: '100% 10px'
+        }}></div>
+
+        {/* Code Rain Effect */}
+        <div className="absolute inset-0 overflow-hidden opacity-30 font-mono text-xs leading-none break-all pointer-events-none text-gray-500">
+            {Array(500).fill(0).map(() => String.fromCharCode(33 + Math.random() * 93)).join(' ')}
+        </div>
+
+        {/* The Archive Racks */}
+        <div className="absolute inset-0 flex justify-between px-20 perspective-1000 opacity-50">
+             <div className="w-32 h-full bg-black border-r border-gray-800 transform rotate-y-45 flex flex-col justify-around py-10">
+                 {[...Array(5)].map((_, i) => <div key={i} className="w-full h-2 bg-red-900/50 animate-pulse"></div>)}
+             </div>
+             <div className="w-32 h-full bg-black border-l border-gray-800 transform -rotate-y-45 flex flex-col justify-around py-10">
+                 {[...Array(5)].map((_, i) => <div key={i} className="w-full h-2 bg-red-900/50 animate-pulse"></div>)}
              </div>
         </div>
 
-        <div className="absolute top-10 text-gray-800 font-mono tracking-widest text-xs">OBJECT CLASS: KETER</div>
+        {/* Static Overlay - Violent */}
+        <div className={`absolute inset-0 pointer-events-none mix-blend-hard-light z-10 ${entityState === 'DANGER' ? 'bg-red-500 opacity-20' : 'bg-white opacity-5'} animate-[flicker_0.05s_infinite]`}></div>
+
+        {/* Central visual - Faces in the noise */}
+        {/* Added z-20 and background for readability */}
+        <div className="z-20 text-center relative bg-black/70 p-8 rounded-xl border border-gray-800 backdrop-blur-md shadow-2xl mx-4">
+             {entityState === 'DANGER' ? (
+                 <div className="animate-pulse relative">
+                     <AlertTriangle size={150} className="text-red-600 mx-auto mb-4 animate-bounce" />
+                     {/* The Face in the Noise */}
+                     <div className="absolute inset-0 flex items-center justify-center mix-blend-overlay opacity-60">
+                        <Ghost size={120} className="blur-sm animate-ping" />
+                     </div>
+                     <h2 className="text-8xl font-black text-red-500 tracking-tighter glitch-anim drop-shadow-[0_0_15px_rgba(255,0,0,0.8)]">RUN</h2>
+                 </div>
+             ) : (
+                 <div className="opacity-100">
+                     <Server size={120} className="text-white mx-auto mb-4 drop-shadow-md" />
+                     <h2 className="text-4xl font-mono text-white tracking-widest drop-shadow-md bg-black/50 px-4 py-2 inline-block">DECRYPTING...</h2>
+                     <div className="w-64 h-2 bg-gray-800 mt-8 mx-auto border border-gray-600">
+                        <div className="h-full bg-white transition-all duration-100 shadow-[0_0_10px_white]" style={{width: `${timer}%`}}></div>
+                     </div>
+                 </div>
+             )}
+        </div>
+    </div>
+  );
+
+  // LEVEL 5: CORE (CLINICAL DEATH VISUALS)
+  const renderCore = () => (
+    <div className="absolute inset-0 bg-white flex items-center justify-center overflow-hidden cursor-none">
+        {/* Blinding Light & Eye Floaters */}
+        <div className="absolute inset-0 bg-white z-0 animate-pulse">
+            {/* Eye Floaters */}
+            {[...Array(5)].map((_, i) => (
+                <div key={i} className="absolute border border-black/10 rounded-full w-20 h-20 opacity-20" style={{ 
+                    top: `${Math.random()*100}%`, left: `${Math.random()*100}%`,
+                    transform: `translate(${Math.sin(Date.now()/1000 + i)*20}px, ${Math.cos(Date.now()/1000 + i)*20}px)`
+                }}></div>
+            ))}
+        </div>
+        
+        {/* The Source Code / Virus Injection */}
+        <div className="z-10 w-full max-w-2xl p-12 relative mix-blend-multiply">
+             <div className="text-[10rem] font-black text-black/5 absolute -top-20 -left-20 rotate-[-10deg]">VOID</div>
+             
+             <div className="space-y-4 font-mono font-bold text-black text-xl text-center">
+                 <p className="tracking-[1em] text-sm">&gt;&gt; SYSTEM_HALT</p>
+                 <div className="w-full h-2 bg-black/10 mt-8 relative overflow-hidden">
+                     <div className="h-full bg-black transition-all duration-75" style={{width: `${timer}%`}}></div>
+                 </div>
+                 <p className="text-xs text-gray-400 mt-2">DELETING_CONSCIOUSNESS... {timer.toFixed(2)}%</p>
+             </div>
+        </div>
+
+        {/* The Black Hole (Monster) */}
+        {/* Expands from center when eyes are closed */}
+        <div 
+            className="absolute z-20 bg-black rounded-full transition-all duration-100 ease-in"
+            style={{ 
+                width: `${monsterPos * 1.5}vw`, 
+                height: `${monsterPos * 1.5}vw`,
+                filter: 'blur(10px)'
+            }}
+        ></div>
+
+        {/* Retinal Burn Vignette */}
+        <div 
+           className="absolute inset-0 pointer-events-none z-30 bg-radial-gradient(circle, transparent 50%, white 100%) transition-opacity duration-100"
+           style={{ opacity: dryness / 100 }}
+        ></div>
+        
+        {/* Bleeding Text */}
+        {dryness > 50 && (
+            <div className="absolute top-10 left-10 text-black/20 text-6xl font-black rotate-90">IT BURNS</div>
+        )}
     </div>
   );
 
   const renderHUD = () => (
     <div className="absolute bottom-8 left-8 right-8 z-40 flex items-end justify-between pointer-events-none">
-      <div className="w-full max-w-md">
+      <div className="w-1/3 max-w-md">
          <div className="flex justify-between text-sm font-mono mb-2 tracking-widest uppercase">
-            <span className={dryness > 80 ? 'text-red-500 animate-pulse font-bold' : 'text-cyan-500'}>
-                {dryness > 80 ? 'CRITICAL DRYNESS' : 'Ocular Moisture'}
+            <span className={dryness > 80 ? 'text-red-500 animate-pulse font-bold' : (currentLevel.type === 'CORE' ? 'text-black font-bold' : 'text-cyan-500')}>
+                {dryness > 80 ? 'CRITICAL DAMAGE' : 'Ocular Moisture'}
             </span>
-            <span className="text-white">{Math.max(0, 100 - dryness).toFixed(0)}%</span>
+            <span className={currentLevel.type === 'CORE' ? 'text-black' : 'text-white'}>{Math.max(0, 100 - dryness).toFixed(0)}%</span>
          </div>
-         <div className="h-3 bg-gray-900/50 border border-gray-700 w-full overflow-hidden backdrop-blur-sm">
+         <div className={`h-3 w-full overflow-hidden backdrop-blur-sm border ${currentLevel.type === 'CORE' ? 'bg-black/10 border-black' : 'bg-gray-900/50 border-gray-700'}`}>
              <div 
-                 className={`h-full transition-all duration-200 ${dryness > 80 ? 'bg-red-600 shadow-[0_0_15px_rgba(220,38,38,0.8)]' : 'bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]'}`} 
+                 className={`h-full transition-all duration-200 ${dryness > 80 ? 'bg-red-600 shadow-[0_0_15px_rgba(220,38,38,0.8)]' : (currentLevel.type === 'CORE' ? 'bg-black' : 'bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]')}`} 
                  style={{ width: `${Math.max(0, 100 - dryness)}%` }}
              ></div>
          </div>
@@ -870,18 +1111,44 @@ const Game: React.FC = () => {
                 <span className="font-black tracking-widest">НЕ СМОТРИ</span>
              </div>
          )}
-         {currentLevel.type === 'BASEMENT' && !eyesClosed && (
-             <div className="text-red-500 text-xs font-mono tracking-widest opacity-80 animate-pulse">ОНО ВИДИТ ТЕБЯ</div>
+         {isPanicCooldown && (
+             <div className="text-red-600 font-black tracking-widest text-xl animate-shake bg-black border border-red-600 px-4 py-1 uppercase glitch-anim">
+                 EYES FORCED OPEN
+             </div>
          )}
-         {monsterPos > 70 && currentLevel.type !== 'MIRROR' && (
-             <div className="text-red-900/80 font-black text-6xl opacity-20 animate-pulse tracking-[1em] uppercase">
+         {currentLevel.type === 'CORE' && (
+             <div className="text-black font-black tracking-widest text-2xl animate-pulse">
+                 НЕ МОРГАЙ
+             </div>
+         )}
+         {monsterPos > 70 && currentLevel.type !== 'MIRROR' && currentLevel.type !== 'ARCHIVE' && (
+             <div className={`${currentLevel.type === 'CORE' ? 'text-black/50' : 'text-red-900/80'} font-black text-6xl opacity-20 animate-pulse tracking-[1em] uppercase`}>
                 БЛИЗКО
              </div>
          )}
       </div>
 
-      <div className="text-right opacity-80">
-         {eyesClosed ? <EyeOff className="w-12 h-12 text-gray-500" /> : <Eye className="w-12 h-12 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]" />}
+      <div className="w-1/3 max-w-md flex flex-col items-end">
+          {currentLevel.type === 'MIRROR' && (
+            <>
+                <div className="flex justify-between w-full text-sm font-mono mb-2 tracking-widest uppercase">
+                    <span className="text-white">{panic.toFixed(0)}%</span>
+                    <span className={panic > 80 ? 'text-purple-500 animate-pulse font-bold' : 'text-purple-500'}>
+                        Adrenaline
+                    </span>
+                </div>
+                <div className="h-3 w-full overflow-hidden backdrop-blur-sm border bg-gray-900/50 border-gray-700">
+                    <div 
+                        className={`h-full transition-all duration-75 ${panic > 80 ? 'bg-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.8)]' : 'bg-purple-800'}`} 
+                        style={{ width: `${panic}%` }}
+                    ></div>
+                </div>
+            </>
+          )}
+
+          <div className="mt-2 text-right opacity-80">
+             {eyesClosed ? <EyeOff className={`w-12 h-12 ${currentLevel.type === 'CORE' ? 'text-black' : 'text-gray-500'}`} /> : <Eye className={`w-12 h-12 ${currentLevel.type === 'CORE' ? 'text-black' : 'text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]'}`} />}
+          </div>
       </div>
     </div>
   );
@@ -934,10 +1201,18 @@ const Game: React.FC = () => {
             {currentLevel.type === 'CORRIDOR' && renderCorridor()}
             {currentLevel.type === 'TERMINAL' && renderTerminal()}
             {currentLevel.type === 'MIRROR' && renderMirror()}
-            {currentLevel.type === 'BASEMENT' && renderBasement()}
+            {currentLevel.type === 'ARCHIVE' && renderArchive()}
+            {currentLevel.type === 'CORE' && renderCore()}
             {renderHUD()}
             
-            {/* PHANTOM SCREAMER OVERLAY (Level Threat) */}
+            {/* RARE EVENTS OVERLAY */}
+            {rareEvent && (
+                <div className="absolute inset-0 z-[120] flex items-center justify-center pointer-events-none">
+                    <h1 className="text-6xl md:text-9xl font-black text-red-600 tracking-tighter animate-ping opacity-80 rotate-12">{rareEvent}</h1>
+                </div>
+            )}
+
+            {/* PHANTOM SCREAMER OVERLAY */}
             {phantomActive && (
                 <div className="absolute inset-0 z-[90] bg-black flex items-center justify-center mix-blend-hard-light">
                     <img src={phantomImg} className="w-full h-full object-cover opacity-50 scale-125 animate-pulse" alt="" />
@@ -945,14 +1220,10 @@ const Game: React.FC = () => {
                 </div>
             )}
 
-            {/* NEW: RARE FLASH OVERLAY (The Glitch) */}
+            {/* RARE FLASH OVERLAY */}
             {flashActive && (
                 <div className="absolute inset-0 z-[100] bg-white mix-blend-exclusion flex items-center justify-center overflow-hidden pointer-events-none">
-                     <img 
-                        src={flashImage} 
-                        className="w-full h-full object-cover scale-150 animate-spin-slow opacity-80 invert contrast-200" 
-                        alt="" 
-                     />
+                     <img src={flashImage} className="w-full h-full object-cover scale-150 animate-spin-slow opacity-80 invert contrast-200" alt="" />
                      <div className="absolute inset-0 border-[50px] border-black opacity-50"></div>
                 </div>
             )}
