@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Eye, EyeOff, Terminal, Skull, AlertTriangle, Disc, Server, Zap, Ghost, Radio, Activity, Power } from 'lucide-react';
+import { Eye, EyeOff, Terminal, Skull, AlertTriangle, Disc, Server, Zap, Ghost, Radio, Activity, Power, Lock, Cpu } from 'lucide-react';
 import GlitchText from './GlitchText';
 
 // --- TYPES & CONSTANTS ---
@@ -8,7 +8,7 @@ type LevelType = 'CORRIDOR' | 'TERMINAL' | 'MIRROR' | 'ARCHIVE' | 'CORE';
 
 const LEVELS: { type: LevelType; title: string; instruction: string; duration: number }[] = [
   { type: 'CORRIDOR', title: 'SEQUENCE_01: APPROACH', instruction: 'Выживите. ОНО движется, пока вы не смотрите.', duration: 25 },
-  { type: 'TERMINAL', title: 'SEQUENCE_02: UPLOAD', instruction: 'Удерживайте взгляд открытым для загрузки.', duration: 100 },
+  { type: 'TERMINAL', title: 'SEQUENCE_02: UPLOAD', instruction: 'Исправляйте ошибки [КЛАВИШИ]. Не моргайте.', duration: 100 },
   { type: 'MIRROR', title: 'SEQUENCE_03: REFLECTION', instruction: 'Если Отражение смотрит — закройте глаза [ПРОБЕЛ].', duration: 30 },
   { type: 'ARCHIVE', title: 'SEQUENCE_04: CORRUPTION', instruction: 'Белый шум — безопасно. Красный шум — СМЕРТЬ.', duration: 100 },
   { type: 'CORE', title: 'SEQUENCE_05: ORIGIN', instruction: 'НЕ МОРГАЙ. Свет выжигает вирус. Тьма убивает.', duration: 100 }
@@ -230,13 +230,20 @@ class HorrorAudioEngine {
     } 
     else if (levelType === 'TERMINAL') {
         // Digital screeching / Data stream
+        // If system is Locked (handled by game logic mainly, but we add ambient tension)
         this.monsterOsc.type = 'square';
-        // Glitchy pitch modulation
-        if (Math.random() > 0.8) {
-            const freq = 200 + Math.random() * 1000;
-            this.monsterOsc.frequency.setValueAtTime(freq, now);
+        if (extraParam === 'LOCKED') {
+            // Alarm state
+            this.monsterOsc.frequency.setValueAtTime(now % 0.5 < 0.25 ? 800 : 400, now);
+            this.monsterGain.gain.setTargetAtTime(0.2, now, 0.1);
+        } else {
+             // Normal data stream
+             if (Math.random() > 0.8) {
+                const freq = 200 + Math.random() * 1000;
+                this.monsterOsc.frequency.setValueAtTime(freq, now);
+            }
+            this.monsterGain.gain.setTargetAtTime(normIntensity * 0.1, now, 0.1);
         }
-        this.monsterGain.gain.setTargetAtTime(normIntensity * 0.1, now, 0.1);
     }
     else if (levelType === 'MIRROR') {
         // Unsettling sine wave + Glass resonance
@@ -401,6 +408,49 @@ class HorrorAudioEngine {
     osc1.stop(this.ctx.currentTime + duration);
     osc2.stop(this.ctx.currentTime + duration);
   }
+  
+  triggerDigitalError() {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+      // Rough modulation
+      osc.frequency.linearRampToValueAtTime(100, this.ctx.currentTime + 0.1);
+      
+      gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
+      
+      // Distortion
+      const waveShaper = this.ctx.createWaveShaper();
+      waveShaper.curve = new Float32Array([-1, 1]); // Hard clip
+      
+      osc.connect(waveShaper);
+      waveShaper.connect(gain);
+      gain.connect(this.masterGain);
+      
+      osc.start();
+      osc.stop(this.ctx.currentTime + 0.3);
+  }
+
+  triggerRepairSuccess() {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1600, this.ctx.currentTime + 0.1);
+      
+      gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+      
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start();
+      osc.stop(this.ctx.currentTime + 0.2);
+  }
 
   triggerSubliminalBurst() {
       // Glitch Sound
@@ -473,6 +523,10 @@ const Game: React.FC = () => {
   const [entityState, setEntityState] = useState<'IDLE' | 'WATCHING' | 'DANGER' | 'SAFE'>('IDLE');
   const [terminalLog, setTerminalLog] = useState<string[]>([]);
   
+  // LEVEL 2 SPECIAL STATE
+  const [terminalState, setTerminalState] = useState<'NORMAL' | 'LOCKED'>('NORMAL');
+  const [hackKey, setHackKey] = useState<string>('');
+
   // EVENTS & RARE MOMENTS
   const [phantomActive, setPhantomActive] = useState(false);
   const [phantomImg, setPhantomImg] = useState('');
@@ -524,7 +578,10 @@ const Game: React.FC = () => {
   useEffect(() => {
       if (gameState === 'PLAYING') {
           const audioInterval = setInterval(() => {
-             const extra = currentLevel.type === 'ARCHIVE' && entityState === 'DANGER' ? 'RED' : undefined;
+             let extra = undefined;
+             if (currentLevel.type === 'ARCHIVE' && entityState === 'DANGER') extra = 'RED';
+             if (currentLevel.type === 'TERMINAL' && terminalState === 'LOCKED') extra = 'LOCKED';
+             
              audioRef.current?.updateProximity(currentLevel.type, monsterPos, extra);
           }, 100);
 
@@ -540,16 +597,16 @@ const Game: React.FC = () => {
               if (whisperTimerRef.current) clearInterval(whisperTimerRef.current);
           };
       }
-  }, [gameState, currentLevel.type, monsterPos, entityState]);
+  }, [gameState, currentLevel.type, monsterPos, entityState, terminalState]);
 
 
   // --- CONTROLS ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // GLOBAL KEYS
       if (e.code === 'Space') {
         if (gameState === 'PLAYING') {
             if (isPanicCooldown) {
-                // Play error/resistance sound?
                 return;
             }
             setEyesClosed(true);
@@ -568,6 +625,29 @@ const Game: React.FC = () => {
             resetGame();
         }
       }
+
+      // LEVEL 2 SPECIAL: HACK MECHANIC
+      if (gameState === 'PLAYING' && currentLevel.type === 'TERMINAL' && terminalState === 'LOCKED') {
+          // Fix: Check against physical KeyCode OR character to support multiple layouts (e.g. Cyrillic)
+          // hackKey is a single char 'R', 'F', etc. 
+          // e.code will be 'KeyR', 'KeyF'.
+          const targetCode = `Key${hackKey}`;
+          
+          if (e.code === targetCode || e.key.toUpperCase() === hackKey) {
+               setTerminalState('NORMAL');
+               setHackKey('');
+               audioRef.current?.triggerRepairSuccess();
+               setShakeIntensity(0);
+          } else {
+               // Only penalize if it's a letter key to avoid accidental punishment from system keys
+               if ((e.code.startsWith('Key') || e.key.length === 1) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                  setTimer(t => Math.max(0, t - 2));
+                  audioRef.current?.triggerDigitalError();
+                  setShakeIntensity(5);
+                  setTimeout(() => setShakeIntensity(2), 100);
+               }
+          }
+      }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -582,7 +662,7 @@ const Game: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [gameState, isPanicCooldown]);
+  }, [gameState, isPanicCooldown, terminalState, hackKey, currentLevel.type]);
 
   // --- BOOT LOGIC ---
   useEffect(() => {
@@ -724,7 +804,7 @@ const Game: React.FC = () => {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [gameState, eyesClosed, currentLevelIdx, timer, monsterPos, entityState, panic, isPanicCooldown]);
+  }, [gameState, eyesClosed, currentLevelIdx, timer, monsterPos, entityState, panic, isPanicCooldown, terminalState]);
 
   // --- LOGIC HANDLERS ---
   const handleCorridorLogic = () => {
@@ -739,16 +819,43 @@ const Game: React.FC = () => {
   };
 
   const handleTerminalLogic = () => {
+    // If LOCKED, progress is hindered and requires manual fix
+    if (terminalState === 'LOCKED') {
+        if (eyesClosed) {
+            setTimer(t => Math.max(0, t - 0.8)); // Harder penalty when locked & closed
+        } else {
+            setTimer(t => Math.max(0, t - 0.2)); // Decay even when open
+        }
+        
+        if (Math.random() > 0.95) setShakeIntensity(2); // Persistent rattle
+        else setShakeIntensity(1);
+
+        return; // No upload progress
+    }
+
+    // Normal Logic
     if (eyesClosed) {
       setTimer(t => Math.max(0, t - 0.5)); 
     } else {
-      setTimer(t => t + 0.4); 
+      setTimer(t => t + 0.35); 
     }
-    if (Math.random() > 0.98) {
+
+    // Random Error Trigger
+    if (Math.random() > 0.985 && timer < 95 && timer > 5) {
+       setTerminalState('LOCKED');
+       const keys = ['F', 'R', 'X', 'C', 'V', 'Z', 'Q'];
+       setHackKey(keys[Math.floor(Math.random() * keys.length)]);
+       audioRef.current?.triggerDigitalError();
+       setShakeIntensity(5);
+    }
+    
+    // Rare Screamers (Standard)
+    if (Math.random() > 0.99) {
        setShakeIntensity(5);
        audioRef.current?.triggerScreamer(0.1);
        setTimeout(() => setShakeIntensity(0), 100);
     }
+
     if (timer >= 100) advanceLevel();
   };
 
@@ -860,6 +967,8 @@ const Game: React.FC = () => {
       setIsPanicCooldown(false);
       setEyesClosed(false);
       setEntityState('IDLE');
+      setTerminalState('NORMAL');
+      setHackKey('');
       setShakeIntensity(0);
       setTimeout(() => setGameState('PLAYING'), 4000);
     }
@@ -882,6 +991,8 @@ const Game: React.FC = () => {
     setPanic(0);
     setIsPanicCooldown(false);
     setTerminalLog([]);
+    setTerminalState('NORMAL');
+    setHackKey('');
     setShakeIntensity(0);
     setBootLogIndex(0);
   };
@@ -1016,9 +1127,11 @@ const Game: React.FC = () => {
           {currentLevel.type === 'TERMINAL' && (
               <>
                   {[...Array(10)].map((_, i) => (
-                      <div key={i} className="absolute bg-green-500 w-1 h-1 rounded-full animate-ping" style={{ top: Math.random()*100+'%', left: Math.random()*100+'%', animationDuration: Math.random()*0.2+0.1+'s', animationDelay: Math.random()+'s' }} />
+                      <div key={i} className={`absolute w-1 h-1 rounded-full animate-ping ${terminalState === 'LOCKED' ? 'bg-red-500' : 'bg-green-500'}`} style={{ top: Math.random()*100+'%', left: Math.random()*100+'%', animationDuration: Math.random()*0.2+0.1+'s', animationDelay: Math.random()+'s' }} />
                   ))}
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-green-900/20 text-9xl font-black blur-sm scale-150 animate-pulse">ERROR</div>
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-9xl font-black blur-sm scale-150 animate-pulse transition-colors duration-200" style={{ color: terminalState === 'LOCKED' ? '#500' : '#050' }}>
+                      {terminalState === 'LOCKED' ? 'FATAL' : 'ERROR'}
+                  </div>
               </>
           )}
 
@@ -1048,7 +1161,7 @@ const Game: React.FC = () => {
       </div>
   );
 
-  // LEVEL 1: CORRIDOR (Updated)
+  // LEVEL 1: CORRIDOR
   const renderCorridor = () => (
     <div className="absolute inset-0 bg-gray-950 overflow-hidden perspective-2000">
         <div className="absolute top-0 w-full h-1/2 bg-gradient-to-b from-[#050505] to-[#111]"></div>
@@ -1083,27 +1196,58 @@ const Game: React.FC = () => {
     </div>
   );
 
-  // LEVEL 2: TERMINAL
+  // LEVEL 2: TERMINAL (ENHANCED)
   const renderTerminal = () => (
-    <div className="absolute inset-0 bg-[#0a0a0a] font-mono flex items-center justify-center">
-        <div className="w-full max-w-4xl h-[80vh] border-2 border-green-900 bg-black/90 p-12 rounded-lg relative overflow-hidden shadow-[0_0_50px_rgba(20,83,45,0.2)]">
+    <div className={`absolute inset-0 bg-[#0a0a0a] font-mono flex items-center justify-center transition-colors duration-200 ${terminalState === 'LOCKED' ? 'bg-red-950/20' : ''}`}>
+        
+        {/* Background Hacking visuals */}
+        {terminalState === 'LOCKED' && (
+            <div className="absolute inset-0 z-0 overflow-hidden opacity-20 pointer-events-none">
+                 {[...Array(20)].map((_,i) => (
+                     <div key={i} className="text-red-600 text-xs absolute animate-pulse" style={{top: Math.random()*100+'%', left: Math.random()*100+'%'}}>ERROR_0x{Math.floor(Math.random()*999)}</div>
+                 ))}
+            </div>
+        )}
+
+        <div className={`w-full max-w-4xl h-[80vh] border-2 transition-colors duration-200 ${terminalState === 'LOCKED' ? 'border-red-600 bg-red-950/80 shadow-[0_0_100px_rgba(220,38,38,0.3)]' : 'border-green-900 bg-black/90 shadow-[0_0_50px_rgba(20,83,45,0.2)]'} p-12 rounded-lg relative overflow-hidden`}>
              <div className="absolute inset-0 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.5)_50%)] bg-[length:100%_4px] pointer-events-none opacity-40"></div>
-             <div className="flex justify-between items-center mb-12 border-b-2 border-green-900/50 pb-4">
-                 <h3 className="text-green-500 text-3xl flex items-center gap-4"><Terminal size={32} /> SYSTEM_ROOT</h3>
-                 <span className="text-green-800 animate-pulse">Connected</span>
+             
+             {/* HEADER */}
+             <div className={`flex justify-between items-center mb-12 border-b-2 pb-4 ${terminalState === 'LOCKED' ? 'border-red-600' : 'border-green-900/50'}`}>
+                 <h3 className={`${terminalState === 'LOCKED' ? 'text-red-500' : 'text-green-500'} text-3xl flex items-center gap-4`}>
+                    {terminalState === 'LOCKED' ? <Lock size={32} className="animate-ping" /> : <Terminal size={32} />} 
+                    {terminalState === 'LOCKED' ? 'SYSTEM_LOCKED' : 'SYSTEM_ROOT'}
+                 </h3>
+                 <span className={`${terminalState === 'LOCKED' ? 'text-red-500 animate-bounce' : 'text-green-800 animate-pulse'}`}>
+                    {terminalState === 'LOCKED' ? '!!! SECURITY BREACH !!!' : 'Connected'}
+                 </span>
              </div>
+
+             {/* BODY */}
              <div className="space-y-4 mb-12 text-lg md:text-xl font-bold h-64 overflow-hidden relative">
-                 <p className="text-green-800">&gt;&gt; Accessing mainframe...</p>
-                 <p className="text-green-600">&gt;&gt; Decoding memory fragments...</p>
-                 {timer > 20 && <p className="text-green-500">&gt;&gt; Fragment: "Они забрали мои глаза."</p>}
-                 {timer > 50 && <p className="text-green-500">&gt;&gt; Fragment: "Я не помню свое лицо."</p>}
-                 {timer > 80 && <p className="text-green-500">&gt;&gt; Fragment: "ВЫПУСТИ МЕНЯ."</p>}
-                 <p className="text-green-400 animate-pulse mt-8">
-                    {eyesClosed ? ">> ERROR: UPLOAD PAUSED." : ">> UPLOADING DATA..."}
-                 </p>
+                 {terminalState === 'LOCKED' ? (
+                     <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-black/50 backdrop-blur-sm">
+                         <AlertTriangle size={80} className="text-red-500 mb-6 animate-pulse" />
+                         <p className="text-red-500 text-2xl tracking-widest bg-black px-4 py-2 border border-red-500 animate-pulse">DATA CORRUPTION DETECTED</p>
+                         <div className="mt-8 text-white text-4xl font-black bg-red-600 px-8 py-4 rounded animate-bounce shadow-[0_0_30px_red]">
+                             PRESS [ <span className="scale-150 inline-block">{hackKey}</span> ] TO REPAIR
+                         </div>
+                     </div>
+                 ) : (
+                     <>
+                        <p className="text-green-800">&gt;&gt; Accessing mainframe...</p>
+                        <p className="text-green-600">&gt;&gt; Decoding memory fragments...</p>
+                        {timer > 20 && <p className="text-green-500">&gt;&gt; Fragment: "Они забрали мои глаза."</p>}
+                        {timer > 50 && <p className="text-green-500">&gt;&gt; Fragment: "Я не помню свое лицо."</p>}
+                        {timer > 80 && <p className="text-green-500">&gt;&gt; Fragment: "ВЫПУСТИ МЕНЯ."</p>}
+                        <p className="text-green-400 animate-pulse mt-8">
+                            {eyesClosed ? ">> ERROR: UPLOAD PAUSED." : ">> UPLOADING DATA..."}
+                        </p>
+                     </>
+                 )}
                  
-                 {/* Easter Egg: Ascii Face */}
-                 {Math.random() > 0.98 && (
+                 {/* ASCII DECORATION */}
+                 {terminalState !== 'LOCKED' && Math.random() > 0.98 && (
                      <pre className="absolute top-0 right-0 text-green-900/20 text-[0.5rem] leading-none pointer-events-none">
 {`
  .--.
@@ -1117,9 +1261,11 @@ const Game: React.FC = () => {
                      </pre>
                  )}
              </div>
-             <div className="w-full h-16 bg-black border-2 border-green-700 relative">
-                 <div className="h-full bg-green-600 transition-all duration-100" style={{ width: `${timer}%` }}></div>
-                 <div className="absolute inset-0 flex items-center justify-center text-2xl font-black text-green-100 mix-blend-difference tracking-widest">
+
+             {/* PROGRESS BAR */}
+             <div className={`w-full h-16 bg-black border-2 ${terminalState === 'LOCKED' ? 'border-red-600' : 'border-green-700'} relative`}>
+                 <div className={`h-full transition-all duration-100 ${terminalState === 'LOCKED' ? 'bg-red-900' : 'bg-green-600'}`} style={{ width: `${timer}%` }}></div>
+                 <div className={`absolute inset-0 flex items-center justify-center text-2xl font-black mix-blend-difference tracking-widest ${terminalState === 'LOCKED' ? 'text-red-500' : 'text-green-100'}`}>
                      {timer.toFixed(1)}% COMPLETE
                  </div>
              </div>
