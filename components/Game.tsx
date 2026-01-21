@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Eye, EyeOff, Terminal, Skull, AlertTriangle, Disc, Server, Zap, Ghost, Radio, Activity } from 'lucide-react';
+import { Eye, EyeOff, Terminal, Skull, AlertTriangle, Disc, Server, Zap, Ghost, Radio, Activity, Power } from 'lucide-react';
 import GlitchText from './GlitchText';
 
 // --- TYPES & CONSTANTS ---
-type GameState = 'BOOT' | 'LEVEL_INTRO' | 'PLAYING' | 'GAMEOVER' | 'VICTORY';
+type GameState = 'PRE_BOOT' | 'BOOT' | 'LEVEL_INTRO' | 'PLAYING' | 'GAMEOVER' | 'VICTORY';
 type LevelType = 'CORRIDOR' | 'TERMINAL' | 'MIRROR' | 'ARCHIVE' | 'CORE';
 
 const LEVELS: { type: LevelType; title: string; instruction: string; duration: number }[] = [
@@ -30,6 +30,19 @@ const RARE_MESSAGES = [
     "ОНИ ЛГУТ ТЕБЕ", "ПРОСНИСЬ", "ЭТО ВСЕ КОД", "ТЫ В КОМЕ", "НЕ ВЕРЬ ГЛАЗАМ", "УДАЛИТЬ?", "SYSTEM_FAILURE"
 ];
 
+const BOOT_LOGS = [
+    "LOADING KERNEL...",
+    "MOUNTING VOLUMES... OK",
+    "CHECKING BIO-METRICS... FAILED",
+    "BYPASSING SECURITY...",
+    "ACCESSING MNEMOSYNE CORE...",
+    "LOADING ASSETS: FEAR.DAT",
+    "LOADING ASSETS: MEMORY_LEAK.EXE",
+    "INITIALIZING OCULAR INTERFACE...",
+    "WARNING: UNSTABLE BUILD DETECTED",
+    "CONNECTION ESTABLISHED."
+];
+
 // --- AUDIO ENGINE 2.0 (ENHANCED) ---
 class HorrorAudioEngine {
   ctx: AudioContext | null = null;
@@ -40,6 +53,10 @@ class HorrorAudioEngine {
   droneGain: GainNode | null = null;
   subOsc: OscillatorNode | null = null; // New Sub-bass layer
   subGain: GainNode | null = null;
+
+  // Menu Ambience
+  menuNode: AudioBufferSourceNode | null = null;
+  menuGain: GainNode | null = null;
 
   // Monster/Danger Layer
   monsterOsc: OscillatorNode | null = null;
@@ -62,12 +79,69 @@ class HorrorAudioEngine {
     if (this.ctx?.state === 'suspended') {
       await this.ctx.resume();
     }
-    this.startAmbience();
   }
 
-  // Deep Ambience
+  // --- MENU AUDIO ---
+  startMenuAmbience() {
+      if (!this.ctx || !this.masterGain) return;
+      this.stopAmbience(); // Stop game ambience if any
+
+      // Create a "Server Room" hum (Brown Noise + LowPass)
+      const bufferSize = this.ctx.sampleRate * 2;
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      let lastOut = 0;
+      for (let i = 0; i < bufferSize; i++) {
+          const white = Math.random() * 2 - 1;
+          data[i] = (lastOut + (0.02 * white)) / 1.02; // Simple Brown noise approx
+          lastOut = data[i];
+          data[i] *= 3.5; 
+      }
+
+      this.menuNode = this.ctx.createBufferSource();
+      this.menuNode.buffer = buffer;
+      this.menuNode.loop = true;
+
+      this.menuGain = this.ctx.createGain();
+      this.menuGain.gain.value = 0.15; // Quiet hum
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 120;
+
+      this.menuNode.connect(filter);
+      filter.connect(this.menuGain);
+      this.menuGain.connect(this.masterGain);
+      this.menuNode.start();
+  }
+
+  playMenuBeep() {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800 + Math.random() * 1000, this.ctx.currentTime);
+      gain.gain.setValueAtTime(0.05, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.05);
+      
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start();
+      osc.stop(this.ctx.currentTime + 0.05);
+  }
+
+  stopMenuAmbience() {
+      if (this.menuNode) {
+          try { this.menuNode.stop(); } catch(e){}
+          this.menuNode.disconnect();
+          this.menuNode = null;
+      }
+  }
+
+  // --- GAME AMBIENCE ---
   startAmbience() {
     if (!this.ctx || !this.masterGain) return;
+    this.stopMenuAmbience();
     this.stopAmbience();
 
     // Layer 1: Mid-range uneasiness
@@ -383,8 +457,9 @@ class HorrorAudioEngine {
 
 const Game: React.FC = () => {
   // SYSTEM STATE
-  const [gameState, setGameState] = useState<GameState>('BOOT');
+  const [gameState, setGameState] = useState<GameState>('PRE_BOOT');
   const [currentLevelIdx, setCurrentLevelIdx] = useState(0);
+  const [bootLogIndex, setBootLogIndex] = useState(0);
   
   // PLAYER STATE
   const [dryness, setDryness] = useState(0);
@@ -414,6 +489,7 @@ const Game: React.FC = () => {
   const intervalRef = useRef<number | null>(null);
   const phantomTimerRef = useRef<number | null>(null);
   const whisperTimerRef = useRef<number | null>(null);
+  const bootLogTimerRef = useRef<number | null>(null);
 
   const currentLevel = LEVELS[currentLevelIdx];
 
@@ -480,12 +556,14 @@ const Game: React.FC = () => {
         }
       }
       if (e.code === 'Enter') {
-        if (gameState === 'BOOT') {
-            audioRef.current?.init();
+        if (gameState === 'PRE_BOOT') {
+            initializeAudio();
+        }
+        else if (gameState === 'BOOT') {
             audioRef.current?.playClick();
             startGameSequence();
         }
-        if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
+        else if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
             audioRef.current?.playClick();
             resetGame();
         }
@@ -505,6 +583,22 @@ const Game: React.FC = () => {
       window.removeEventListener('keyup', handleKeyUp);
     };
   }, [gameState, isPanicCooldown]);
+
+  // --- BOOT LOGIC ---
+  useEffect(() => {
+      if (gameState === 'BOOT') {
+          bootLogTimerRef.current = window.setInterval(() => {
+             setBootLogIndex(prev => {
+                 if (prev < BOOT_LOGS.length) {
+                     audioRef.current?.playMenuBeep();
+                     return prev + 1;
+                 }
+                 return prev;
+             });
+          }, 200);
+          return () => { if (bootLogTimerRef.current) clearInterval(bootLogTimerRef.current); }
+      }
+  }, [gameState]);
 
   // --- PHANTOM SYSTEM ---
   useEffect(() => {
@@ -722,7 +816,15 @@ const Game: React.FC = () => {
   };
 
   // --- ACTIONS ---
+  const initializeAudio = async () => {
+      await audioRef.current?.init();
+      audioRef.current?.startMenuAmbience();
+      audioRef.current?.playClick();
+      setGameState('BOOT');
+  };
+
   const startGameSequence = () => {
+    audioRef.current?.startAmbience();
     setGameState('LEVEL_INTRO');
     setTimeout(() => setGameState('PLAYING'), 4000);
   };
@@ -771,6 +873,7 @@ const Game: React.FC = () => {
   };
 
   const resetGame = () => {
+    audioRef.current?.startMenuAmbience();
     setGameState('BOOT');
     setCurrentLevelIdx(0);
     setTimer(0);
@@ -780,27 +883,100 @@ const Game: React.FC = () => {
     setIsPanicCooldown(false);
     setTerminalLog([]);
     setShakeIntensity(0);
+    setBootLogIndex(0);
   };
 
   // --- RENDERERS ---
 
+  const renderPreBoot = () => (
+      <div 
+        className="h-full w-full bg-black flex flex-col items-center justify-center p-8 text-center cursor-pointer z-50 relative overflow-hidden"
+        onClick={initializeAudio}
+      >
+          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] opacity-20 animate-pulse"></div>
+          <Power className="w-16 h-16 text-red-900 mb-8 animate-pulse" />
+          <h1 className="text-2xl font-mono text-gray-500 tracking-[0.5em] mb-4">SYSTEM_SLEEP_MODE</h1>
+          <p className="text-xs text-gray-700 font-mono tracking-widest animate-bounce">CLICK TO INITIALIZE CORE</p>
+      </div>
+  );
+
   const renderBoot = () => (
-    <div className="h-full w-full bg-black flex flex-col items-center justify-center p-8 text-center font-mono relative z-30">
-      <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] opacity-20"></div>
-      <div className="text-red-600 text-9xl mb-8 animate-pulse opacity-80"><Skull size={120} strokeWidth={1} /></div>
-      <h1 className="text-6xl md:text-8xl font-black text-white mb-4 tracking-tighter glitch-anim">
-        MNEMOSYNE
-      </h1>
-      <p className="text-red-500 font-mono text-xl tracking-[0.5em] mb-4">PROTOCOL_ERROR</p>
-      <p className="text-gray-600 font-mono text-sm tracking-widest mb-12">Версия: 0.1 beta</p>
+    <div className="h-full w-full bg-[#030303] flex items-center justify-center relative z-30 overflow-hidden perspective-1000">
       
-      <div className="border-l-2 border-red-900 pl-6 text-left max-w-lg space-y-4 text-gray-400 font-mono text-sm md:text-base bg-black/50 backdrop-blur-md p-6">
-        <p className="pt-4 text-red-500 animate-pulse font-bold">&gt;&gt; ПРЕДУПРЕЖДЕНИЕ: СОДЕРЖИТ ЗВУК И СКРИМЕРЫ</p>
-        <p className="text-white">ИНСТРУКЦИЯ:</p>
-        <p>1. [ПРОБЕЛ] - закрыть глаза / моргнуть.</p>
-        <p>2. Не допускайте сухости глаз.</p>
-        <p>3. Не держите глаза закрытыми слишком долго.</p>
-        <p className="mt-8 text-cyan-400 animate-pulse font-bold">&gt;&gt; НАЖМИТЕ [ENTER] ДЛЯ ЗАПУСКА АУДИО-ЯДРА</p>
+      {/* Background Grid Floor */}
+      <div className="absolute inset-0 bg-gradient-to-b from-black via-[#050000] to-[#1a0505]">
+          <div className="w-[200%] h-[200%] absolute top-[-50%] left-[-50%] opacity-20"
+               style={{
+                   backgroundImage: 'linear-gradient(rgba(255, 0, 0, 0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 0, 0, 0.3) 1px, transparent 1px)',
+                   backgroundSize: '40px 40px',
+                   transform: 'perspective(500px) rotateX(60deg) translateY(0)',
+                   animation: 'gridMove 20s linear infinite'
+               }}>
+          </div>
+          <style>{`
+            @keyframes gridMove {
+              0% { transform: perspective(500px) rotateX(60deg) translateY(0); }
+              100% { transform: perspective(500px) rotateX(60deg) translateY(40px); }
+            }
+          `}</style>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 w-full max-w-6xl p-8 gap-12 z-10">
+          {/* LEFT: Title & Instructions */}
+          <div className="flex flex-col justify-center items-start text-left">
+              <div className="mb-2 text-red-900/50 font-mono text-xs tracking-widest">MNEMOSYNE_PROTOCOL // V.0.9.4</div>
+              <h1 className="text-7xl md:text-9xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-gray-600 mb-6 tracking-tighter relative group cursor-default">
+                MNEMOSYNE
+                <span className="absolute top-0 left-0 -ml-1 text-red-500 opacity-50 mix-blend-screen animate-pulse pointer-events-none">MNEMOSYNE</span>
+                <span className="absolute top-0 left-0 ml-1 text-cyan-500 opacity-50 mix-blend-screen animate-pulse delay-75 pointer-events-none">MNEMOSYNE</span>
+              </h1>
+              
+              <div className="border-l-4 border-red-900/50 pl-6 py-2 bg-black/40 backdrop-blur-sm max-w-md">
+                <p className="text-gray-400 font-mono text-sm mb-4 leading-relaxed">
+                   Психо-визуальный хоррор эксперимент. <br/>
+                   Ваши глаза — единственный контроллер.
+                </p>
+                <div className="space-y-2 text-xs font-mono text-gray-500">
+                    <p className="flex items-center gap-2"><div className="w-2 h-2 bg-white rounded-full"></div> [ПРОБЕЛ] : МОРГНУТЬ</p>
+                    <p className="flex items-center gap-2"><div className="w-2 h-2 bg-red-900 rounded-full animate-pulse"></div> СЛЕЖИТЕ ЗА ВЛАЖНОСТЬЮ ГЛАЗ</p>
+                </div>
+              </div>
+
+              <div className="mt-12 group cursor-pointer" onClick={startGameSequence}>
+                  <p className="text-cyan-400 font-mono text-xl tracking-widest border-b border-cyan-900 pb-1 group-hover:pl-4 transition-all duration-300 flex items-center gap-4">
+                     <span className="animate-pulse">&gt; START_SIMULATION</span>
+                     <span className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-red-500"> [ENTER]</span>
+                  </p>
+              </div>
+          </div>
+
+          {/* RIGHT: System Logs */}
+          <div className="hidden md:flex flex-col justify-end items-start border border-gray-900 bg-black/80 p-6 h-[400px] font-mono text-xs relative overflow-hidden shadow-2xl">
+              <div className="absolute top-0 left-0 w-full h-1 bg-red-900/50"></div>
+              <div className="absolute top-2 right-2 text-red-900 animate-pulse"><Activity size={16} /></div>
+              
+              <div className="space-y-1 w-full text-green-900">
+                  {BOOT_LOGS.slice(0, bootLogIndex).map((log, i) => (
+                      <p key={i} className={`border-l-2 pl-2 ${i === bootLogIndex - 1 ? 'border-green-500 text-green-500 bg-green-900/10' : 'border-transparent text-green-800'}`}>
+                          &gt; {log}
+                      </p>
+                  ))}
+                  <div ref={(el) => el?.scrollIntoView({ behavior: 'smooth' })} />
+              </div>
+
+              {bootLogIndex >= BOOT_LOGS.length && (
+                  <div className="mt-4 border-t border-gray-800 pt-4 w-full">
+                      <div className="flex justify-between text-gray-600 mb-1">
+                          <span>CORE_INTEGRITY</span>
+                          <span>34%</span>
+                      </div>
+                      <div className="w-full h-1 bg-gray-900">
+                          <div className="h-full bg-red-900 w-1/3 animate-pulse"></div>
+                      </div>
+                      <p className="text-red-500 mt-2 animate-pulse bg-red-900/10 p-1 text-center">WARNING: MEMORY LEAK</p>
+                  </div>
+              )}
+          </div>
       </div>
     </div>
   );
@@ -1195,6 +1371,7 @@ const Game: React.FC = () => {
         className="w-full h-full relative cursor-none overflow-hidden"
         style={{ transform: `translate(${Math.random() * shakeIntensity - shakeIntensity/2}px, ${Math.random() * shakeIntensity - shakeIntensity/2}px)` }}
     >
+      {gameState === 'PRE_BOOT' && renderPreBoot()}
       {gameState === 'BOOT' && renderBoot()}
       {gameState === 'LEVEL_INTRO' && renderLevelIntro()}
       {gameState === 'PLAYING' && (
