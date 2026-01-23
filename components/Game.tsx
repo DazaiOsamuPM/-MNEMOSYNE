@@ -3,7 +3,7 @@ import { Eye, EyeOff, Terminal, Skull, AlertTriangle, Disc, Server, Zap, Ghost, 
 import GlitchText from './GlitchText';
 
 // --- TYPES & CONSTANTS ---
-type GameState = 'PRE_BOOT' | 'BOOT' | 'LEVEL_INTRO' | 'PLAYING' | 'GAMEOVER' | 'VICTORY';
+type GameState = 'PRE_BOOT' | 'BOOT' | 'LEVEL_INTRO' | 'PLAYING' | 'CUTSCENE' | 'GAMEOVER' | 'VICTORY';
 type LevelType = 'CORRIDOR' | 'TERMINAL' | 'MIRROR' | 'ARCHIVE' | 'CORE';
 
 const LEVELS: { type: LevelType; title: string; instruction: string; duration: number }[] = [
@@ -24,6 +24,13 @@ const FLASH_IMAGES = [
     "https://picsum.photos/seed/face1/800/800?grayscale&contrast=2",
     "https://picsum.photos/seed/face2/800/800?grayscale&invert=1",
     "https://picsum.photos/seed/scream/800/800?grayscale&blur=2"
+];
+
+const MEMORY_IMAGES = [
+    "https://picsum.photos/seed/nature/800/600?grayscale",
+    "https://picsum.photos/seed/sky/800/600?grayscale",
+    "https://picsum.photos/seed/hands/800/600?grayscale",
+    "https://picsum.photos/seed/city/800/600?grayscale"
 ];
 
 const RARE_MESSAGES = [
@@ -527,6 +534,9 @@ const Game: React.FC = () => {
   const [terminalState, setTerminalState] = useState<'NORMAL' | 'LOCKED'>('NORMAL');
   const [hackKey, setHackKey] = useState<string>('');
 
+  // CUTSCENE STATE
+  const [cutsceneStage, setCutsceneStage] = useState(0);
+
   // EVENTS & RARE MOMENTS
   const [phantomActive, setPhantomActive] = useState(false);
   const [phantomImg, setPhantomImg] = useState('');
@@ -555,13 +565,13 @@ const Game: React.FC = () => {
 
   // Heartbeat Logic
   useEffect(() => {
-    if (gameState !== 'PLAYING') {
+    if (gameState !== 'PLAYING' && gameState !== 'CUTSCENE') {
         if (heartbeatRef.current) clearInterval(heartbeatRef.current);
         return;
     }
 
     // BPM increases with Panic as well now
-    const bpm = 60 + (monsterPos) + (dryness / 2) + (panic / 1.5);
+    const bpm = gameState === 'CUTSCENE' ? 140 : 60 + (monsterPos) + (dryness / 2) + (panic / 1.5);
     const interval = 60000 / bpm;
 
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -741,6 +751,53 @@ const Game: React.FC = () => {
       return () => clearInterval(checkRare);
   }, [gameState]);
 
+  // --- CUTSCENE SEQUENCER ---
+  useEffect(() => {
+      if (gameState === 'CUTSCENE') {
+          audioRef.current?.stopAmbience();
+          setCutsceneStage(0);
+          
+          // Audio: Start glitching
+          const glitchInterval = setInterval(() => {
+              if (Math.random() > 0.5) audioRef.current?.triggerRepairSuccess();
+              if (Math.random() > 0.7) audioRef.current?.triggerDigitalError();
+          }, 150);
+
+          // Phase 1 -> 2: Memory Flash (4s)
+          setTimeout(() => {
+              setCutsceneStage(1);
+              clearInterval(glitchInterval);
+              // Audio: Screamer/Flash bursts
+              const flashInterval = setInterval(() => {
+                  audioRef.current?.triggerSubliminalBurst();
+              }, 400);
+              setTimeout(() => clearInterval(flashInterval), 3000);
+          }, 4000);
+
+          // Phase 2 -> 3: Whiteout (8s)
+          setTimeout(() => {
+              setCutsceneStage(2);
+              // Audio: High pitch tinnitus
+              if (audioRef.current?.masterGain) {
+                  // Silence everything for impact
+                   audioRef.current.masterGain.gain.exponentialRampToValueAtTime(0.001, audioRef.current.ctx!.currentTime + 2);
+              }
+          }, 8000);
+
+          // Phase 3 -> Victory (12s)
+          setTimeout(() => {
+              if (audioRef.current?.masterGain) {
+                  audioRef.current.masterGain.gain.setValueAtTime(0.8, audioRef.current.ctx!.currentTime);
+              }
+              setGameState('VICTORY');
+          }, 12000);
+
+          return () => {
+              clearInterval(glitchInterval);
+          }
+      }
+  }, [gameState]);
+
 
   // --- GAME LOOP ---
   useEffect(() => {
@@ -756,7 +813,7 @@ const Game: React.FC = () => {
         }
       } else {
         let baseRate = 0.4;
-        if (currentLevel.type === 'CORE') baseRate = 1.5; 
+        if (currentLevel.type === 'CORE') baseRate = 0.8; // REDUCED FROM 1.5 for better balance
         const levelMult = currentLevelIdx * 0.1;
         
         setDryness(prev => {
@@ -912,10 +969,13 @@ const Game: React.FC = () => {
 
   const handleCoreLogic = () => {
       if (!eyesClosed) {
-          setTimer(t => t + 0.12); 
-          setMonsterPos(p => Math.max(0, p - 0.2)); 
+          // OPTIMIZED: Faster progress (0.2 instead of 0.12)
+          setTimer(t => t + 0.2); 
+          // OPTIMIZED: Faster monster retreat (0.5 instead of 0.2)
+          setMonsterPos(p => Math.max(0, p - 0.5)); 
       } else {
-          setMonsterPos(p => p + 3.5); 
+          // OPTIMIZED: Slower monster approach (2.0 instead of 3.5)
+          setMonsterPos(p => p + 2.0); 
       }
 
       if (monsterPos >= 100) triggerGameOver("ТЬМА ПОГЛОТИЛА ВАС.");
@@ -956,7 +1016,7 @@ const Game: React.FC = () => {
   const advanceLevel = () => {
     if (intervalRef.current) clearInterval(intervalRef.current);
     if (currentLevelIdx + 1 >= LEVELS.length) {
-      setGameState('VICTORY');
+      setGameState('CUTSCENE'); // Changed from VICTORY
     } else {
       setGameState('LEVEL_INTRO');
       setCurrentLevelIdx(prev => prev + 1);
@@ -1409,6 +1469,46 @@ const Game: React.FC = () => {
     </div>
   );
 
+  const renderCutscene = () => (
+      <div className="absolute inset-0 flex flex-col items-center justify-center overflow-hidden z-[100]">
+          {/* Phase 1: Defragmentation */}
+          {cutsceneStage === 0 && (
+              <div className="w-full h-full bg-black flex items-center justify-center font-mono text-green-500 text-xs">
+                   <div className="w-full h-full overflow-hidden opacity-50 absolute inset-0 break-all p-4">
+                       {Array(1000).fill(0).map(() => Math.random().toString(36).substring(2)).join(' ')}
+                   </div>
+                   <div className="z-10 bg-black/90 p-8 border border-green-500 text-center animate-pulse">
+                       <h1 className="text-4xl font-black mb-4">RESTORING BACKUP...</h1>
+                       <p>SUBJECT: 893-B</p>
+                       <p>MEMORY INTEGRITY: 100%</p>
+                   </div>
+              </div>
+          )}
+          
+          {/* Phase 2: Memory Flashback */}
+          {cutsceneStage === 1 && (
+              <div className="w-full h-full bg-white animate-[flicker_0.05s_infinite] flex items-center justify-center relative">
+                   {MEMORY_IMAGES.map((img, i) => (
+                       <img 
+                            key={i} 
+                            src={img} 
+                            className="absolute inset-0 w-full h-full object-cover mix-blend-multiply opacity-0 animate-[flash_0.2s_infinite]" 
+                            style={{ animationDelay: `${i * 0.1}s` }}
+                       />
+                   ))}
+                   <h1 className="z-10 text-9xl font-black text-black mix-blend-hard-light animate-ping">ДЫШИ</h1>
+              </div>
+          )}
+
+          {/* Phase 3: Whiteout */}
+          {cutsceneStage === 2 && (
+              <div className="w-full h-full bg-white transition-opacity duration-[4000ms] flex items-center justify-center">
+                  <div className="w-4 h-4 bg-black rounded-full animate-ping"></div>
+              </div>
+          )}
+      </div>
+  );
+
   const renderHUD = () => (
     <div className="absolute bottom-8 left-8 right-8 z-40 flex items-end justify-between pointer-events-none">
       <div className="w-1/3 max-w-md">
@@ -1556,6 +1656,7 @@ const Game: React.FC = () => {
             {eyesClosed && renderClosedEyeVisuals()}
          </>
       )}
+      {gameState === 'CUTSCENE' && renderCutscene()}
       {gameState === 'VICTORY' && renderVictory()}
       {gameState === 'GAMEOVER' && renderGameOver()}
     </div>
