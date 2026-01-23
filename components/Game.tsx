@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Eye, EyeOff, Terminal, Skull, AlertTriangle, Disc, Server, Zap, Ghost, Radio, Activity, Power, Lock, Cpu } from 'lucide-react';
+import { Eye, EyeOff, Terminal, Skull, AlertTriangle, Disc, Server, Zap, Ghost, Radio, Activity, Power, Lock, Cpu, Syringe, Save } from 'lucide-react';
 import GlitchText from './GlitchText';
 
 // --- TYPES & CONSTANTS ---
 type GameState = 'PRE_BOOT' | 'BOOT' | 'LEVEL_INTRO' | 'PLAYING' | 'CUTSCENE' | 'GAMEOVER' | 'VICTORY';
-type LevelType = 'CORRIDOR' | 'TERMINAL' | 'MIRROR' | 'ARCHIVE' | 'CORE';
+type LevelType = 'CORRIDOR' | 'TERMINAL' | 'MIRROR' | 'ARCHIVE' | 'CORE' | 'INTEGRATION';
 
 const LEVELS: { type: LevelType; title: string; instruction: string; duration: number }[] = [
   { type: 'CORRIDOR', title: 'SEQUENCE_01: APPROACH', instruction: 'Выживите. ОНО движется, пока вы не смотрите.', duration: 25 },
   { type: 'TERMINAL', title: 'SEQUENCE_02: UPLOAD', instruction: 'Исправляйте ошибки [КЛАВИШИ]. Не моргайте.', duration: 100 },
   { type: 'MIRROR', title: 'SEQUENCE_03: REFLECTION', instruction: 'Если Отражение смотрит — закройте глаза [ПРОБЕЛ].', duration: 30 },
   { type: 'ARCHIVE', title: 'SEQUENCE_04: CORRUPTION', instruction: 'Белый шум — безопасно. Красный шум — СМЕРТЬ.', duration: 100 },
-  { type: 'CORE', title: 'SEQUENCE_05: ORIGIN', instruction: 'НЕ МОРГАЙ. Свет выжигает вирус. Тьма убивает.', duration: 100 }
+  { type: 'CORE', title: 'SEQUENCE_05: ORIGIN', instruction: 'НЕ МОРГАЙ. Свет выжигает вирус. Тьма убивает.', duration: 100 },
+  { type: 'INTEGRATION', title: 'SEQUENCE_06: REALITY_CHECK', instruction: 'СЛУШАЙ ГОЛОСА. Зеленый = МОРГНИ. Красный = ТЕРПИ.', duration: 60 }
 ];
 
 const SCREAMER_IMAGES = [
@@ -293,6 +294,21 @@ class HorrorAudioEngine {
             this.subOsc.frequency.setTargetAtTime(35 + (normIntensity * 20), now, 0.5);
         }
     }
+    else if (levelType === 'INTEGRATION') {
+        // ECG Monitor Style Bleeps + Mechanical Breathing
+        this.monsterOsc.type = 'square';
+        this.monsterOsc.frequency.setValueAtTime(0, now); // Handled by command triggers mainly
+        
+        if (extraParam === 'ALARM') {
+            this.monsterOsc.frequency.setValueAtTime(2000, now);
+            this.monsterGain.gain.setTargetAtTime(0.3, now, 0.05);
+        } else {
+             this.monsterGain.gain.setTargetAtTime(0, now, 0.1);
+        }
+
+        // Heavy breathing in background
+        if (Math.random() > 0.98) this.triggerWhisper();
+    }
   }
 
   triggerThud() {
@@ -492,6 +508,35 @@ class HorrorAudioEngine {
     osc.stop(this.ctx.currentTime + 0.2);
   }
 
+  triggerCommandSuccess() {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(880, this.ctx.currentTime);
+      gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start();
+      osc.stop(this.ctx.currentTime + 0.1);
+  }
+
+  triggerCommandFail() {
+      if (!this.ctx || !this.masterGain) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+      osc.frequency.linearRampToValueAtTime(100, this.ctx.currentTime + 0.2);
+      gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start();
+      osc.stop(this.ctx.currentTime + 0.2);
+  }
+
   playClick() {
       if (!this.ctx || !this.masterGain) return;
       const osc = this.ctx.createOscillator();
@@ -517,6 +562,7 @@ const Game: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>('PRE_BOOT');
   const [currentLevelIdx, setCurrentLevelIdx] = useState(0);
   const [bootLogIndex, setBootLogIndex] = useState(0);
+  const [saveData, setSaveData] = useState<number | null>(null);
   
   // PLAYER STATE
   const [dryness, setDryness] = useState(0);
@@ -533,6 +579,10 @@ const Game: React.FC = () => {
   // LEVEL 2 SPECIAL STATE
   const [terminalState, setTerminalState] = useState<'NORMAL' | 'LOCKED'>('NORMAL');
   const [hackKey, setHackKey] = useState<string>('');
+
+  // LEVEL 6 SPECIAL STATE
+  const [integrationCommand, setIntegrationCommand] = useState<'NONE' | 'BLINK' | 'HOLD'>('NONE');
+  const [integrationTimer, setIntegrationTimer] = useState(0);
 
   // CUTSCENE STATE
   const [cutsceneStage, setCutsceneStage] = useState(0);
@@ -563,6 +613,17 @@ const Game: React.FC = () => {
     return () => audioRef.current?.stopAll();
   }, []);
 
+  // Check Save Data
+  useEffect(() => {
+    const savedLevel = localStorage.getItem('mnemosyne_save_level');
+    if (savedLevel) {
+        const idx = parseInt(savedLevel, 10);
+        if (!isNaN(idx) && idx < LEVELS.length) {
+            setSaveData(idx);
+        }
+    }
+  }, [gameState]); // Re-check on state change to catch updates
+
   // Heartbeat Logic
   useEffect(() => {
     if (gameState !== 'PLAYING' && gameState !== 'CUTSCENE') {
@@ -591,6 +652,7 @@ const Game: React.FC = () => {
              let extra = undefined;
              if (currentLevel.type === 'ARCHIVE' && entityState === 'DANGER') extra = 'RED';
              if (currentLevel.type === 'TERMINAL' && terminalState === 'LOCKED') extra = 'LOCKED';
+             if (currentLevel.type === 'INTEGRATION' && integrationCommand !== 'NONE') extra = 'ALARM';
              
              audioRef.current?.updateProximity(currentLevel.type, monsterPos, extra);
           }, 100);
@@ -607,7 +669,7 @@ const Game: React.FC = () => {
               if (whisperTimerRef.current) clearInterval(whisperTimerRef.current);
           };
       }
-  }, [gameState, currentLevel.type, monsterPos, entityState, terminalState]);
+  }, [gameState, currentLevel.type, monsterPos, entityState, terminalState, integrationCommand]);
 
 
   // --- CONTROLS ---
@@ -627,29 +689,33 @@ const Game: React.FC = () => {
             initializeAudio();
         }
         else if (gameState === 'BOOT') {
+            // Default to Resume if available, else Start
             audioRef.current?.playClick();
-            startGameSequence();
+            if (saveData !== null) {
+                resumeGame();
+            } else {
+                startNewGame();
+            }
         }
-        else if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
+        else if (gameState === 'GAMEOVER') {
             audioRef.current?.playClick();
-            resetGame();
+            restartLevel();
+        }
+        else if (gameState === 'VICTORY') {
+            audioRef.current?.playClick();
+            resetToBoot();
         }
       }
 
       // LEVEL 2 SPECIAL: HACK MECHANIC
       if (gameState === 'PLAYING' && currentLevel.type === 'TERMINAL' && terminalState === 'LOCKED') {
-          // Fix: Check against physical KeyCode OR character to support multiple layouts (e.g. Cyrillic)
-          // hackKey is a single char 'R', 'F', etc. 
-          // e.code will be 'KeyR', 'KeyF'.
           const targetCode = `Key${hackKey}`;
-          
           if (e.code === targetCode || e.key.toUpperCase() === hackKey) {
                setTerminalState('NORMAL');
                setHackKey('');
                audioRef.current?.triggerRepairSuccess();
                setShakeIntensity(0);
           } else {
-               // Only penalize if it's a letter key to avoid accidental punishment from system keys
                if ((e.code.startsWith('Key') || e.key.length === 1) && !e.ctrlKey && !e.altKey && !e.metaKey) {
                   setTimer(t => Math.max(0, t - 2));
                   audioRef.current?.triggerDigitalError();
@@ -672,7 +738,7 @@ const Game: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [gameState, isPanicCooldown, terminalState, hackKey, currentLevel.type]);
+  }, [gameState, isPanicCooldown, terminalState, hackKey, currentLevel.type, saveData]);
 
   // --- BOOT LOGIC ---
   useEffect(() => {
@@ -784,12 +850,28 @@ const Game: React.FC = () => {
               }
           }, 8000);
 
-          // Phase 3 -> Victory (12s)
+          // Phase 3 -> Level 6 (12s)
           setTimeout(() => {
               if (audioRef.current?.masterGain) {
                   audioRef.current.masterGain.gain.setValueAtTime(0.8, audioRef.current.ctx!.currentTime);
               }
-              setGameState('VICTORY');
+              // Advance to Level 6
+              const nextLevel = 5;
+              setCurrentLevelIdx(nextLevel); 
+              localStorage.setItem('mnemosyne_save_level', nextLevel.toString()); // Auto-save for Level 6 start
+              setGameState('LEVEL_INTRO');
+              setTimer(0);
+              setMonsterPos(0);
+              setDryness(0);
+              setPanic(0);
+              setIsPanicCooldown(false);
+              setEyesClosed(false);
+              setEntityState('IDLE');
+              setTerminalState('NORMAL');
+              setHackKey('');
+              setIntegrationCommand('NONE');
+              setShakeIntensity(0);
+              setTimeout(() => setGameState('PLAYING'), 4000);
           }, 12000);
 
           return () => {
@@ -813,7 +895,8 @@ const Game: React.FC = () => {
         }
       } else {
         let baseRate = 0.4;
-        if (currentLevel.type === 'CORE') baseRate = 0.8; // REDUCED FROM 1.5 for better balance
+        if (currentLevel.type === 'CORE') baseRate = 0.8;
+        if (currentLevel.type === 'INTEGRATION') baseRate = 0.6;
         const levelMult = currentLevelIdx * 0.1;
         
         setDryness(prev => {
@@ -854,6 +937,9 @@ const Game: React.FC = () => {
         case 'CORE':
           handleCoreLogic();
           break;
+        case 'INTEGRATION':
+          handleIntegrationLogic();
+          break;
       }
 
     }, 50);
@@ -861,7 +947,7 @@ const Game: React.FC = () => {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [gameState, eyesClosed, currentLevelIdx, timer, monsterPos, entityState, panic, isPanicCooldown, terminalState]);
+  }, [gameState, eyesClosed, currentLevelIdx, timer, monsterPos, entityState, panic, isPanicCooldown, terminalState, integrationCommand, integrationTimer]);
 
   // --- LOGIC HANDLERS ---
   const handleCorridorLogic = () => {
@@ -969,17 +1055,73 @@ const Game: React.FC = () => {
 
   const handleCoreLogic = () => {
       if (!eyesClosed) {
-          // OPTIMIZED: Faster progress (0.2 instead of 0.12)
           setTimer(t => t + 0.2); 
-          // OPTIMIZED: Faster monster retreat (0.5 instead of 0.2)
           setMonsterPos(p => Math.max(0, p - 0.5)); 
       } else {
-          // OPTIMIZED: Slower monster approach (2.0 instead of 3.5)
           setMonsterPos(p => p + 2.0); 
       }
 
       if (monsterPos >= 100) triggerGameOver("ТЬМА ПОГЛОТИЛА ВАС.");
       if (timer >= 100) advanceLevel();
+  };
+
+  const handleIntegrationLogic = () => {
+      setTimer(t => t + 0.05);
+      
+      // Manage Monster (The Surgeon)
+      setMonsterPos(p => p + 0.05); // Constant creep
+      if (monsterPos >= 100) triggerGameOver("ХИРУРГ ЗАВЕРШИЛ ОПЕРАЦИЮ.");
+
+      // Command System
+      if (integrationCommand === 'NONE') {
+          if (integrationTimer <= 0) {
+              // Pick new command
+              if (Math.random() > 0.05) { // 95% chance to start new command
+                  const type = Math.random() > 0.5 ? 'BLINK' : 'HOLD';
+                  setIntegrationCommand(type);
+                  setIntegrationTimer(1500); // 1.5 seconds to react
+                  audioRef.current?.triggerDigitalError(); // Alert sound
+              }
+          } else {
+              setIntegrationTimer(t => Math.max(0, t - 50));
+          }
+      } else {
+          // Command Active
+          setIntegrationTimer(t => Math.max(0, t - 50));
+
+          let failed = false;
+          if (integrationCommand === 'BLINK') {
+             // MUST CLOSE EYES
+             if (!eyesClosed && integrationTimer < 1000) { // Grace period over
+                 failed = true;
+             }
+             if (eyesClosed) {
+                 // Success frame
+                 setMonsterPos(p => Math.max(0, p - 0.5));
+             }
+          } else if (integrationCommand === 'HOLD') {
+             // MUST KEEP OPEN
+             if (eyesClosed) {
+                 failed = true;
+             }
+          }
+
+          if (failed) {
+              setShakeIntensity(20);
+              setMonsterPos(p => p + 5);
+              audioRef.current?.triggerCommandFail();
+              setIntegrationCommand('NONE'); // Reset immediately on fail
+              setIntegrationTimer(1000); // Cooldown
+          } else if (integrationTimer <= 0) {
+              // Success sequence finished
+              audioRef.current?.triggerCommandSuccess();
+              setIntegrationCommand('NONE');
+              setIntegrationTimer(Math.random() * 2000 + 1000); // Random wait
+          }
+      }
+
+      // Finish
+      if (timer >= currentLevel.duration) advanceLevel();
   };
 
   // --- ACTIONS ---
@@ -990,10 +1132,45 @@ const Game: React.FC = () => {
       setGameState('BOOT');
   };
 
+  const startNewGame = () => {
+    localStorage.removeItem('mnemosyne_save_level');
+    setSaveData(null);
+    setCurrentLevelIdx(0);
+    startGameSequence();
+  };
+
+  const resumeGame = () => {
+      if (saveData !== null) {
+          setCurrentLevelIdx(saveData);
+          startGameSequence();
+      } else {
+          startNewGame();
+      }
+  };
+
   const startGameSequence = () => {
     audioRef.current?.startAmbience();
     setGameState('LEVEL_INTRO');
+    
+    // Reset basic state, but maintain Level Index
+    setTimer(0);
+    setMonsterPos(0);
+    setDryness(0);
+    setPanic(0);
+    setIsPanicCooldown(false);
+    setEyesClosed(false);
+    setEntityState('IDLE');
+    setTerminalState('NORMAL');
+    setHackKey('');
+    setIntegrationCommand('NONE');
+    setShakeIntensity(0);
+
     setTimeout(() => setGameState('PLAYING'), 4000);
+  };
+
+  const restartLevel = () => {
+      // Just resets current level state, keeps index
+      startGameSequence();
   };
 
   const triggerPanicAttack = () => {
@@ -1015,11 +1192,28 @@ const Game: React.FC = () => {
 
   const advanceLevel = () => {
     if (intervalRef.current) clearInterval(intervalRef.current);
+    
+    // Check if we just finished the Cutscene or normal level
+    if (gameState === 'CUTSCENE') {
+        return; 
+    }
+
     if (currentLevelIdx + 1 >= LEVELS.length) {
-      setGameState('CUTSCENE'); // Changed from VICTORY
+      setGameState('VICTORY');
+      localStorage.removeItem('mnemosyne_save_level'); // Clear save on win
     } else {
+      // Special Transition for Level 5 -> Cutscene
+      if (currentLevelIdx === 4) { // End of CORE
+           setGameState('CUTSCENE');
+           // We do not save here, we save inside the cutscene logic when it transitions to Level 6
+           return;
+      }
+      
+      // Normal Transition
+      const nextLevel = currentLevelIdx + 1;
+      localStorage.setItem('mnemosyne_save_level', nextLevel.toString());
+      setCurrentLevelIdx(nextLevel);
       setGameState('LEVEL_INTRO');
-      setCurrentLevelIdx(prev => prev + 1);
       setTimer(0);
       setMonsterPos(0);
       setDryness(0);
@@ -1041,10 +1235,11 @@ const Game: React.FC = () => {
     setTerminalLog(prev => [...prev, reason]);
   };
 
-  const resetGame = () => {
+  const resetToBoot = () => {
     audioRef.current?.startMenuAmbience();
     setGameState('BOOT');
-    setCurrentLevelIdx(0);
+    // We don't reset Level Index here, just UI state, 
+    // because user might want to Resume or Start New
     setTimer(0);
     setMonsterPos(0);
     setDryness(0);
@@ -1055,6 +1250,7 @@ const Game: React.FC = () => {
     setHackKey('');
     setShakeIntensity(0);
     setBootLogIndex(0);
+    setIntegrationCommand('NONE');
   };
 
   // --- RENDERERS ---
@@ -1113,11 +1309,23 @@ const Game: React.FC = () => {
                 </div>
               </div>
 
-              <div className="mt-12 group cursor-pointer" onClick={startGameSequence}>
-                  <p className="text-cyan-400 font-mono text-xl tracking-widest border-b border-cyan-900 pb-1 group-hover:pl-4 transition-all duration-300 flex items-center gap-4">
-                     <span className="animate-pulse">&gt; START_SIMULATION</span>
-                     <span className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-red-500"> [ENTER]</span>
-                  </p>
+              <div className="mt-12 space-y-4">
+                  {saveData !== null && (
+                      <div className="group cursor-pointer" onClick={resumeGame}>
+                        <p className="text-green-500 font-mono text-xl tracking-widest border-b border-green-900 pb-1 group-hover:pl-4 transition-all duration-300 flex items-center gap-4">
+                            <Save size={18} className="animate-pulse" />
+                            <span>&gt; RESUME_SESSION [LVL {saveData + 1}]</span>
+                            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-green-700"> [ENTER]</span>
+                        </p>
+                      </div>
+                  )}
+
+                  <div className="group cursor-pointer" onClick={startNewGame}>
+                      <p className={`${saveData !== null ? 'text-gray-500 hover:text-red-400' : 'text-cyan-400'} font-mono text-xl tracking-widest border-b border-current pb-1 group-hover:pl-4 transition-all duration-300 flex items-center gap-4`}>
+                         <span>&gt; {saveData !== null ? 'NEW_SIMULATION' : 'START_SIMULATION'}</span>
+                         {saveData !== null && <span className="text-xs text-red-900 opacity-0 group-hover:opacity-100"> WARNING: DATA WIPE</span>}
+                      </p>
+                  </div>
               </div>
           </div>
 
@@ -1153,13 +1361,13 @@ const Game: React.FC = () => {
   );
 
   const renderLevelIntro = () => (
-    <div className="h-full w-full bg-black flex flex-col items-center justify-center text-center z-50 relative">
-      <div className="absolute inset-0 bg-red-900/5 animate-pulse"></div>
-      <h2 className="text-6xl md:text-8xl font-black text-white mb-8 tracking-tighter uppercase glitch-anim scale-110">
+    <div className={`h-full w-full flex flex-col items-center justify-center text-center z-50 relative ${currentLevelIdx === 5 ? 'bg-white text-black' : 'bg-black text-white'}`}>
+      <div className={`absolute inset-0 animate-pulse ${currentLevelIdx === 5 ? 'bg-cyan-900/10' : 'bg-red-900/5'}`}></div>
+      <h2 className="text-6xl md:text-8xl font-black mb-8 tracking-tighter uppercase glitch-anim scale-110">
         {LEVELS[currentLevelIdx].title}
       </h2>
-      <div className="bg-black/80 px-8 py-4 border border-red-900/30">
-        <p className="text-red-500 font-mono text-2xl md:text-3xl max-w-4xl">
+      <div className={`${currentLevelIdx === 5 ? 'bg-white/80 border-cyan-900/30' : 'bg-black/80 border-red-900/30'} px-8 py-4 border`}>
+        <p className={`${currentLevelIdx === 5 ? 'text-cyan-600' : 'text-red-500'} font-mono text-2xl md:text-3xl max-w-4xl`}>
            <GlitchText text={LEVELS[currentLevelIdx].instruction} intensity={0.2} />
         </p>
       </div>
@@ -1210,9 +1418,16 @@ const Game: React.FC = () => {
                    <div className="absolute text-black text-9xl font-black tracking-tighter animate-bounce z-10">DON'T BLINK</div>
                </div>
           )}
+          
+          {/* Integration Safe/Command Zone */}
+          {currentLevel.type === 'INTEGRATION' && (
+               <div className="absolute inset-0 bg-black flex items-center justify-center border-[20px] border-green-500 animate-pulse">
+                   <h1 className="text-green-500 text-6xl font-black tracking-widest">EYES CLOSED</h1>
+               </div>
+          )}
 
           {/* Common Text */}
-          {currentLevel.type !== 'CORE' && (
+          {currentLevel.type !== 'CORE' && currentLevel.type !== 'INTEGRATION' && (
              <div className="text-gray-900 font-mono text-sm animate-pulse tracking-widest relative z-10 flex flex-col items-center">
                  <p>...moisturizing...</p>
                  {panic > 50 && <p className="text-red-900 mt-2 font-bold opacity-50">ANXIETY RISING</p>}
@@ -1469,6 +1684,61 @@ const Game: React.FC = () => {
     </div>
   );
 
+  // LEVEL 6: INTEGRATION (HOSPITAL/REALITY)
+  const renderIntegration = () => (
+      <div className="absolute inset-0 bg-white flex items-center justify-center overflow-hidden font-sans">
+          {/* Clinical Grid */}
+          <div className="absolute inset-0 opacity-10" 
+               style={{ 
+                   backgroundImage: `linear-gradient(#000 1px, transparent 1px), linear-gradient(90deg, #000 1px, transparent 1px)`,
+                   backgroundSize: '50px 50px'
+               }}>
+          </div>
+
+          {/* The Surgeon (Monster) */}
+          <div 
+            className="absolute z-10 transition-all duration-500 ease-linear grayscale contrast-200"
+            style={{ 
+                width: `${20 + monsterPos * 0.5}vw`, 
+                bottom: '0',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                opacity: 0.8 + (monsterPos * 0.002)
+            }}
+          >
+             <div className="w-full h-[80vh] bg-black/80 rounded-t-full relative blur-sm">
+                 <div className="absolute top-20 left-10 w-4 h-4 bg-white rounded-full animate-ping"></div>
+                 <div className="absolute top-20 right-10 w-4 h-4 bg-white rounded-full animate-ping delay-100"></div>
+                 <div className="absolute bottom-1/2 w-full text-center text-white font-mono opacity-50">DOCTOR_IS_IN</div>
+             </div>
+          </div>
+
+          {/* Command Center */}
+          <div className="z-20 flex flex-col items-center">
+              {integrationCommand !== 'NONE' && (
+                  <div className={`text-9xl font-black tracking-tighter animate-pulse scale-150 transition-all ${integrationCommand === 'BLINK' ? 'text-green-600' : 'text-red-600'}`}>
+                      {integrationCommand === 'BLINK' ? 'МОРГНИ' : 'ТЕРПИ'}
+                  </div>
+              )}
+              {integrationCommand === 'NONE' && (
+                  <div className="text-black/20 font-mono text-xl animate-pulse">
+                      CALIBRATING...
+                  </div>
+              )}
+          </div>
+
+          {/* Neural Uplink Progress */}
+          <div className="absolute top-10 left-10 font-mono text-black">
+              <div className="flex items-center gap-2 mb-2">
+                  <Syringe className="animate-pulse" /> NEURAL_INTEGRATION
+              </div>
+              <div className="w-64 h-4 border border-black p-1">
+                  <div className="h-full bg-black transition-all duration-100" style={{width: `${timer}%`}}></div>
+              </div>
+          </div>
+      </div>
+  );
+
   const renderCutscene = () => (
       <div className="absolute inset-0 flex flex-col items-center justify-center overflow-hidden z-[100]">
           {/* Phase 1: Defragmentation */}
@@ -1513,14 +1783,14 @@ const Game: React.FC = () => {
     <div className="absolute bottom-8 left-8 right-8 z-40 flex items-end justify-between pointer-events-none">
       <div className="w-1/3 max-w-md">
          <div className="flex justify-between text-sm font-mono mb-2 tracking-widest uppercase">
-            <span className={dryness > 80 ? 'text-red-500 animate-pulse font-bold' : (currentLevel.type === 'CORE' ? 'text-black font-bold' : 'text-cyan-500')}>
+            <span className={dryness > 80 ? 'text-red-500 animate-pulse font-bold' : ((currentLevel.type === 'CORE' || currentLevel.type === 'INTEGRATION') ? 'text-black font-bold' : 'text-cyan-500')}>
                 {dryness > 80 ? 'CRITICAL DAMAGE' : 'Ocular Moisture'}
             </span>
-            <span className={currentLevel.type === 'CORE' ? 'text-black' : 'text-white'}>{Math.max(0, 100 - dryness).toFixed(0)}%</span>
+            <span className={(currentLevel.type === 'CORE' || currentLevel.type === 'INTEGRATION') ? 'text-black' : 'text-white'}>{Math.max(0, 100 - dryness).toFixed(0)}%</span>
          </div>
-         <div className={`h-3 w-full overflow-hidden backdrop-blur-sm border ${currentLevel.type === 'CORE' ? 'bg-black/10 border-black' : 'bg-gray-900/50 border-gray-700'}`}>
+         <div className={`h-3 w-full overflow-hidden backdrop-blur-sm border ${(currentLevel.type === 'CORE' || currentLevel.type === 'INTEGRATION') ? 'bg-black/10 border-black' : 'bg-gray-900/50 border-gray-700'}`}>
              <div 
-                 className={`h-full transition-all duration-200 ${dryness > 80 ? 'bg-red-600 shadow-[0_0_15px_rgba(220,38,38,0.8)]' : (currentLevel.type === 'CORE' ? 'bg-black' : 'bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]')}`} 
+                 className={`h-full transition-all duration-200 ${dryness > 80 ? 'bg-red-600 shadow-[0_0_15px_rgba(220,38,38,0.8)]' : ((currentLevel.type === 'CORE' || currentLevel.type === 'INTEGRATION') ? 'bg-black' : 'bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]')}`} 
                  style={{ width: `${Math.max(0, 100 - dryness)}%` }}
              ></div>
          </div>
@@ -1544,7 +1814,7 @@ const Game: React.FC = () => {
                  НЕ МОРГАЙ
              </div>
          )}
-         {monsterPos > 70 && currentLevel.type !== 'MIRROR' && currentLevel.type !== 'ARCHIVE' && (
+         {monsterPos > 70 && currentLevel.type !== 'MIRROR' && currentLevel.type !== 'ARCHIVE' && currentLevel.type !== 'INTEGRATION' && (
              <div className={`${currentLevel.type === 'CORE' ? 'text-black/50' : 'text-red-900/80'} font-black text-6xl opacity-20 animate-pulse tracking-[1em] uppercase`}>
                 БЛИЗКО
              </div>
@@ -1570,7 +1840,7 @@ const Game: React.FC = () => {
           )}
 
           <div className="mt-2 text-right opacity-80">
-             {eyesClosed ? <EyeOff className={`w-12 h-12 ${currentLevel.type === 'CORE' ? 'text-black' : 'text-gray-500'}`} /> : <Eye className={`w-12 h-12 ${currentLevel.type === 'CORE' ? 'text-black' : 'text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]'}`} />}
+             {eyesClosed ? <EyeOff className={`w-12 h-12 ${(currentLevel.type === 'CORE' || currentLevel.type === 'INTEGRATION') ? 'text-black' : 'text-gray-500'}`} /> : <Eye className={`w-12 h-12 ${(currentLevel.type === 'CORE' || currentLevel.type === 'INTEGRATION') ? 'text-black' : 'text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]'}`} />}
           </div>
       </div>
     </div>
@@ -1578,16 +1848,16 @@ const Game: React.FC = () => {
 
   const renderVictory = () => (
     <div className="h-full w-full bg-[#f0f0f0] flex flex-col items-center justify-center text-black p-8 text-center z-50">
-        <Disc size={64} className="mb-8 animate-spin-slow text-gray-400" />
-        <h1 className="text-6xl md:text-8xl font-black mb-4 tracking-tighter">SUBJECT RELEASED</h1>
+        <Cpu size={64} className="mb-8 animate-pulse text-gray-400" />
+        <h1 className="text-6xl md:text-8xl font-black mb-4 tracking-tighter uppercase">INTEGRATION COMPLETE</h1>
         <div className="h-1 w-32 bg-black mb-8"></div>
         <p className="font-serif italic text-2xl mb-12 max-w-2xl leading-relaxed text-gray-800">
-           "Тест завершен. Ваша личность была успешно восстановлена из резервной копии. <br/>
-           Добро пожаловать домой."
+           "Калибровка завершена. Нейросеть успешно интегрирована в носителя.<br/>
+           Добро пожаловать в реальный мир, <span className="font-bold">UNIT 893</span>."
         </p>
         <button 
-           onClick={resetGame}
-           className="px-12 py-4 bg-black text-white hover:bg-gray-800 transition-all font-mono tracking-widest text-xl"
+           onClick={resetToBoot}
+           className="px-12 py-4 bg-black text-white hover:bg-gray-800 transition-all font-mono tracking-widest text-xl border border-transparent hover:border-black"
         >
             REBOOT SYSTEM
         </button>
@@ -1603,12 +1873,20 @@ const Game: React.FC = () => {
                 <p key={i} className="uppercase tracking-widest">{log}</p>
             ))}
         </div>
-        <button 
-           onClick={resetGame}
-           className="z-10 px-12 py-4 border-2 border-red-600 text-red-500 font-mono text-xl hover:bg-red-600 hover:text-black transition-colors"
-        >
-            TRY AGAIN
-        </button>
+        <div className="z-10 flex flex-col md:flex-row gap-6">
+            <button 
+               onClick={restartLevel}
+               className="px-12 py-4 border-2 border-red-600 text-red-500 font-mono text-xl hover:bg-red-600 hover:text-black transition-colors"
+            >
+                TRY AGAIN
+            </button>
+            <button 
+               onClick={resetToBoot}
+               className="px-12 py-4 border border-gray-700 text-gray-500 font-mono text-xl hover:bg-gray-900 hover:text-gray-300 transition-colors"
+            >
+                ABORT SEQUENCE
+            </button>
+        </div>
     </div>
   );
 
@@ -1627,6 +1905,7 @@ const Game: React.FC = () => {
             {currentLevel.type === 'MIRROR' && renderMirror()}
             {currentLevel.type === 'ARCHIVE' && renderArchive()}
             {currentLevel.type === 'CORE' && renderCore()}
+            {currentLevel.type === 'INTEGRATION' && renderIntegration()}
             {renderHUD()}
             
             {/* RARE EVENTS OVERLAY */}
